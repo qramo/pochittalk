@@ -29,7 +29,11 @@ class RadioSounds {
     private val handler = Handler(Looper.getMainLooper())
     private val cache = HashMap<String, ShortArray>()
 
-    @Volatile var enabled: Boolean = true
+    /** 効果音の音量 (0.0〜1.5)。0 で消える。マイクの送信音量には影響しない。 */
+    @Volatile var volume: Float = 1f
+
+    /** スピーカーのミュート中は鳴らさない。 */
+    @Volatile var muted: Boolean = false
 
     fun playStart() = play("start") { synthStart() }
     fun playEnd() = play("end") { synthEnd() }
@@ -39,10 +43,12 @@ class RadioSounds {
     fun playEnter() = play("enter") { synthEnter() }
 
     private fun play(name: String, synth: () -> ShortArray) {
-        if (!enabled) return
+        val gain = if (muted) 0f else volume
+        if (gain <= 0f) return
         try {
             // 確率的に作るノイズは毎回作り直す。トーン系だけキャッシュ。
-            val samples = if (name == "start" || name == "busy" || name == "enter") cache.getOrPut(name, synth) else synth()
+            val base = if (name == "start" || name == "busy" || name == "enter") cache.getOrPut(name, synth) else synth()
+            val samples = if (gain == 1f) base else ShortArray(base.size) { i -> (base[i] * gain).toInt().coerceIn(-32767, 32767).toShort() }
             val track = AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()

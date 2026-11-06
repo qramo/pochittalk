@@ -68,6 +68,8 @@ val aboutSections: List<AboutSection> = listOf(
             AboutBlock.Bullets(
                 listOf(
                     "**ハンドルネーム**: このアプリの設定領域（SharedPreferences）に保存され、次回起動時に入力済みになります。端末の外には保存されず、バックアップの対象にもしていません。アプリのデータを消去すると削除されます。",
+                    "**左手用の設定**: オンにしたときだけ、その旨を SharedPreferences（キー名 pochitalk_lefty）に保存します。この端末の中だけにあり、運営側には送られません。",
+                    "**効果音の音量**: 0〜150%の数字を、同じく SharedPreferences（キー名 pochitalk_sfx_vol）に保存します。この端末の中だけにあり、運営側には送られません。",
                     "**入力レベル**: マイクの増幅（0〜30dB）の数字を、同じく SharedPreferences（キー名 pochitalk_input_db）に保存します。この端末の中だけにあり、運営側には送られません。",
                     "**初回案内の表示設定**: 初回の案内で「次回も表示する」をオフにしたときだけ、その旨を SharedPreferences（キー名 pochitalk_welcome）に保存します。この端末の中だけにあり、運営側には送られません。",
                     "**VOXのしきい値**: 1〜10の数字を、同じく SharedPreferences（キー名 pochitalk_vox_level）に保存します。この端末の中だけにあり、運営側には送られません。",

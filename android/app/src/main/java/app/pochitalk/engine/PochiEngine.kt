@@ -65,6 +65,8 @@ object PochiEngine {
     // Web版とは入力レベルが違うので、Android専用のキー (Web版の "pochitalk_vox_thr" とは別の値の意味)
     private const val PREF_VOX_THR = "pochitalk_vox_level"
     private const val PREF_MIC_GAIN = "pochitalk_input_db"      // Web版と同じキー名 (0〜30dB)
+    private const val PREF_SFX_VOL = "pochitalk_sfx_vol"       // Web版と同じキー名 (0〜150%)
+    private const val PREF_LEFTY = "pochitalk_lefty"           // Web版と同じ: オンにしたときだけ "1" を保存
     private const val PREF_WELCOME = "pochitalk_welcome"       // Web版と同じ: オフにしたときだけ "off" を保存
     private const val DEFAULT_VOX_STEP = 4
     private const val STREAM_ID = "pochitalk-audio"
@@ -90,6 +92,7 @@ object PochiEngine {
 
     val sounds = RadioSounds()
     private val micGain = MicGain()
+    private var audioModule: JavaAudioDeviceModule? = null
 
     /** 待機中のマイク音量の監視 (VOX・レベルメーター用)。送信中は止めて libwebrtc の録音の音量を使う。 */
     private val micMonitor = MicMonitor { rms -> pushMonRms(rms) }
@@ -182,6 +185,9 @@ object PochiEngine {
         val savedGain = prefs.getInt(PREF_MIC_GAIN, 0).coerceIn(0, 30)
         micGain.gain = Math.pow(10.0, savedGain / 20.0).toFloat()
         _state.update { it.copy(micGainDb = savedGain, welcomeOn = prefs.getString(PREF_WELCOME, null) != "off") }
+        val savedSfx = prefs.getInt(PREF_SFX_VOL, 100).coerceIn(0, 150)
+        sounds.volume = savedSfx / 100f
+        _state.update { it.copy(sfxVolume = savedSfx, lefty = prefs.getString(PREF_LEFTY, null) == "1") }
         refreshMicPermission()
         registerNetworkWatcher()
         Runtime.scope.launch { startNetwork() }
@@ -191,17 +197,18 @@ object PochiEngine {
         PeerConnectionFactory.initialize(
             PeerConnectionFactory.InitializationOptions.builder(app).createInitializationOptions(),
         )
-        val adm = JavaAudioDeviceModule.builder(app)
+        val module = JavaAudioDeviceModule.builder(app)
             .setSamplesReadyCallback { samples -> onMicSamples(samples) }
             .setAudioRecordStateCallback(object : JavaAudioDeviceModule.AudioRecordStateCallback {
                 override fun onWebRtcAudioRecordStart() { Runtime.scope.launch { onRtcRecording(true) } }
                 override fun onWebRtcAudioRecordStop() { Runtime.scope.launch { onRtcRecording(false) } }
             })
             .createAudioDeviceModule()
+        audioModule = module
         val processing = ExternalAudioProcessingFactory()
         processing.setCapturePostProcessing(micGain)
         val f = PeerConnectionFactory.builder()
-            .setAudioDeviceModule(adm)
+            .setAudioDeviceModule(module)
             .setAudioProcessingFactory(processing)
             .createPeerConnectionFactory()
         factory = f
@@ -765,6 +772,14 @@ object PochiEngine {
         }
     }
 
+    /** スワイプと判定した: 送信中なら、終了音を鳴らさずにすぐ止める。 */
+    fun pttAbort() {
+        Runtime.scope.launch {
+            pressed = false
+            stopTransmission(quiet = true)
+        }
+    }
+
     fun pttRelease() {
         Runtime.scope.launch {
             pressed = false
@@ -815,7 +830,7 @@ object PochiEngine {
         renderScan()
     }
 
-    private fun stopTransmission() {
+    private fun stopTransmission(quiet: Boolean = false) {
         if (!isTransmitting) return
         isTransmitting = false
         txEndedAt = System.currentTimeMillis()
@@ -828,7 +843,7 @@ object PochiEngine {
             setStatus(StatusKind.STANDBY, "STANDBY", ledTx = false, ledRx = false)
         }
         _state.update { it.copy(ledTx = false) }
-        sounds.playEnd()
+        if (!quiet) sounds.playEnd()
         pttStateAction?.sendJson(JSONObject().put("isTalking", false))
         announce(null)
         renderScan()
@@ -939,10 +954,36 @@ object PochiEngine {
         }
     }
 
-    fun setSound(on: Boolean) {
-        sounds.enabled = on
-        _state.update { it.copy(soundOn = on) }
+    /** 効果音の音量 (0〜150%)。0 にすると消える。Web版と同じ。 */
+    fun setSfxVolume(percent: Int) {
+        val v = percent.coerceIn(0, 150)
+        sounds.volume = v / 100f
+        _state.update { it.copy(sfxVolume = v) }
+        prefs.edit().putInt(PREF_SFX_VOL, v).apply()
     }
+
+    /** スライダーを離したときの試し聴き (「ガッ」)。 */
+    fun previewSfx() {
+        sounds.playEnd()
+    }
+
+    /** 左手用: VOX ボタンを話すボタンの右側に置く。オンにしたときだけ保存する。 */
+    fun setLefty(on: Boolean) {
+        _state.update { it.copy(lefty = on) }
+        if (on) prefs.edit().putString(PREF_LEFTY, "1").apply() else prefs.edit().remove(PREF_LEFTY).apply()
+    }
+
+    /** スピーカーのミュート切り替え (相手の声と効果音を止める。マイクは止めない)。 */
+    fun toggleSpeakerMute() {
+        Runtime.scope.launch {
+            val muted = !_state.value.speakerMuted
+            audioModule?.setSpeakerMute(muted)
+            sounds.muted = muted
+            _state.update { it.copy(speakerMuted = muted) }
+            flash(if (muted) "スピーカーをミュートしました" else "スピーカーのミュートを解除しました")
+        }
+    }
+
 
     /**
      * 1〜10の値が大きいほど、大きな声が必要になる (Web版と同じ向き)。

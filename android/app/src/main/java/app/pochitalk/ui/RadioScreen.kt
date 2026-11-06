@@ -3,9 +3,12 @@ package app.pochitalk.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -15,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -40,6 +45,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
@@ -47,6 +53,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import android.os.SystemClock
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.SpanStyle
@@ -76,7 +84,7 @@ import kotlin.math.abs
  * 部屋一覧は、左から右へスワイプして開く (PochiRoot のドロワー)。
  */
 @Composable
-fun RadioScreen(state: UiState, actions: Actions, modifier: Modifier = Modifier) {
+fun RadioScreen(state: UiState, actions: Actions, onOpenRooms: () -> Unit, modifier: Modifier = Modifier) {
     val key = state.currentKey ?: return
     val scroll = rememberScrollState()
     val density = LocalDensity.current
@@ -88,7 +96,7 @@ fun RadioScreen(state: UiState, actions: Actions, modifier: Modifier = Modifier)
                 .verticalScroll(scroll)
                 .padding(16.dp),
         ) {
-            DeviceCard(state, key, actions)
+            DeviceCard(state, key, actions, onOpenRooms)
             Spacer(Modifier.height(24.dp))
         }
         if (showSticky) {
@@ -109,7 +117,7 @@ fun RadioScreen(state: UiState, actions: Actions, modifier: Modifier = Modifier)
 }
 
 @Composable
-private fun DeviceCard(state: UiState, key: String, actions: Actions) {
+private fun DeviceCard(state: UiState, key: String, actions: Actions, onOpenRooms: () -> Unit) {
     val shape = RoundedCornerShape(28.dp)
     val meter by PochiEngine.meter.collectAsStateWithLifecycle()
     Column(
@@ -126,24 +134,31 @@ private fun DeviceCard(state: UiState, key: String, actions: Actions) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Brand()
-                SubButton(onClick = actions.leave, small = true) { Text("退出", fontSize = 12.sp) }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    SubButton(
+                        onClick = { PochiEngine.reconnect(auto = false) },
+                        enabled = !state.reconnecting,
+                        small = true,
+                    ) { Text(if (state.reconnecting) "再接続中…" else "再接続", fontSize = 12.sp) }
+                    SubButton(onClick = actions.leave, small = true) { Text("退出", fontSize = 12.sp) }
+                }
             }
             HorizontalDivider(thickness = 2.dp, color = PochiColors.Border)
         }
         DisplayPanel(state, key, meter)
-        PttSection(transmitting = state.ledTx)
+        PttSection(transmitting = state.ledTx, voxOn = state.voxOn, lefty = state.lefty, onOpenRooms = onOpenRooms)
         // フッター
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SubButton(onClick = actions.share, modifier = Modifier.weight(1f)) { Text("招待URLを送る", fontSize = 13.sp) }
+                // スピーカーのミュート (相手の声と効果音を止める。マイクは止めない)
                 SubButton(
-                    onClick = { PochiEngine.reconnect(auto = false) },
-                    enabled = !state.reconnecting,
-                    modifier = Modifier.weight(1f),
-                ) { Text(if (state.reconnecting) "再接続中…" else "再接続", fontSize = 13.sp) }
+                    onClick = { PochiEngine.toggleSpeakerMute() },
+                    container = if (state.speakerMuted) Color(0xFF7F1D1D) else Color(0xFF374151),
+                    modifier = Modifier.width(64.dp),
+                ) { Text(if (state.speakerMuted) "🔇" else "🔈", fontSize = 18.sp) }
             }
             VoxSection(state)
-            SwitchRow("無線効果音（スケルチ音など）を鳴らす", state.soundOn) { PochiEngine.setSound(it) }
         }
     }
 }
@@ -209,7 +224,11 @@ private fun DisplayPanel(state: UiState, key: String, meter: MeterState) {
                 }
                 .padding(top = 10.dp),
         ) {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            FlowRow(
+                modifier = Modifier.heightIn(max = 110.dp).verticalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 // 自分 (Web版と同じ): 先頭に青い名札。話しているときは赤く光る
                 val sending = state.ledTx
                 val myName = state.nickname.trim().ifEmpty { "NoName" }
@@ -221,7 +240,7 @@ private fun DisplayPanel(state: UiState, key: String, meter: MeterState) {
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
                         .background(if (sending) Color(0xFF7F1D1D) else Color(0xFF172554))
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                        .padding(horizontal = 8.dp, vertical = 1.dp),
                 )
                 state.peers.forEach { p ->
                     Text(
@@ -232,7 +251,7 @@ private fun DisplayPanel(state: UiState, key: String, meter: MeterState) {
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
                             .background(if (p.talking) Color(0xFF064E3B) else PochiColors.Chip)
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                            .padding(horizontal = 8.dp, vertical = 1.dp),
                     )
                 }
                 if (state.peers.isEmpty()) {
@@ -306,8 +325,10 @@ private fun TagRow(state: UiState) {
 }
 
 @Composable
-private fun PttSection(transmitting: Boolean) {
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+private fun PttSection(transmitting: Boolean, voxOn: Boolean, lefty: Boolean, onOpenRooms: () -> Unit) {
+    // VOX の丸ボタンは、話すボタンの左下に置く (左手用は右下)。下に少しはみ出すので、余白を取る
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
+        val sidePad = (maxWidth / 2 - 150.dp).coerceAtLeast(0.dp)
         val brush = if (transmitting) {
             Brush.radialGradient(listOf(Color(0xFFEF4444), Color(0xFFB91C1C)))
         } else {
@@ -315,35 +336,101 @@ private fun PttSection(transmitting: Boolean) {
         }
         Box(
             Modifier
+                .align(Alignment.TopCenter)
                 .size(170.dp)
                 .scale(if (transmitting) 0.96f else 1f)
                 .clip(CircleShape)
                 .background(brush)
                 .border(6.dp, if (transmitting) Color(0xFF7F1D1D) else Color(0xFF1E3A8A), CircleShape)
                 .pointerInput(Unit) {
-                    detectTapGestures(onPress = {
-                        PochiEngine.pttPress()
-                        try {
-                            tryAwaitRelease()
-                        } finally {
-                            PochiEngine.pttRelease()
+                    // 指がボタン (円) の上にいる間は、どれだけ動いてもスワイプとみなさない。
+                    // 円の縁から約14dp以上離れたときだけ、スワイプ (= 部屋一覧のスワイプ) とみなして、
+                    // 送信を始めない / 送信中なら直ちに止める。
+                    // 円の上にいる間は動きを消費して、親 (部屋一覧のドロワー・画面のスクロール) に取られないようにする。
+                    // 円の外に出たら消費をやめるので、そこから先は一覧のスワイプとして扱われる。
+                    val center = Offset(size.width / 2f, size.height / 2f)
+                    val outsideRadius = size.width / 2f + 14.dp.toPx()
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val g = PttGesture(center.x, center.y, outsideRadius)
+                        g.onDown(SystemClock.uptimeMillis(), down.position.x, down.position.y)
+                        fun apply(action: PttGesture.Action) {
+                            when (action) {
+                                PttGesture.Action.START -> PochiEngine.pttPress()
+                                PttGesture.Action.RELEASE -> PochiEngine.pttRelease()
+                                PttGesture.Action.ABORT -> PochiEngine.pttAbort()
+                                PttGesture.Action.SWIPE, PttGesture.Action.NONE -> {}
+                            }
                         }
-                    })
+                        try {
+                            while (true) {
+                                val wait = if (g.state == PttGesture.State.WAITING) g.remainingMs(SystemClock.uptimeMillis()) else Long.MAX_VALUE
+                                val event = if (wait == Long.MAX_VALUE) awaitPointerEvent() else withTimeoutOrNull(wait.coerceAtLeast(1L)) { awaitPointerEvent() }
+                                if (event == null) {
+                                    apply(g.onTimer(SystemClock.uptimeMillis()))
+                                    continue
+                                }
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) {
+                                    apply(g.onUp())
+                                    return@awaitEachGesture
+                                }
+                                val moveAction = g.onMove(SystemClock.uptimeMillis(), change.position.x, change.position.y)
+                                apply(moveAction)
+                                if (moveAction == PttGesture.Action.ABORT || moveAction == PttGesture.Action.SWIPE) {
+                                    // 円の外に出た: 右向きの動きなら、部屋一覧のスワイプとして一覧を開く。
+                                    // (円の上にいる間は動きを消費していたので、親のドロワーは、このスワイプを自分では拾えない)
+                                    if (change.position.x - down.position.x > 0f) onOpenRooms()
+                                }
+                                // 円の上にいる間 (待ち・送信中) は、動きを親に渡さない
+                                if (g.state == PttGesture.State.WAITING || g.state == PttGesture.State.TALKING) change.consume()
+                            }
+                        } finally {
+                            // 途中で取り消されたときも、送信したままにしない
+                            if (g.state == PttGesture.State.TALKING) apply(g.onCancel())
+                        }
+                    }
                 },
             contentAlignment = Alignment.Center,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("POCHI", color = Color.White, fontWeight = FontWeight.Black, fontSize = 21.sp)
-                Text("TALK", color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp, letterSpacing = 2.sp)
+                Text("PUSH", color = Color.White, fontWeight = FontWeight.Black, fontSize = 21.sp)
+                Text("TO TALK", color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp, letterSpacing = 2.sp)
             }
         }
-        Text("ボタンを押している間だけ話せます", color = PochiColors.Muted, fontSize = 13.sp)
+        VoxButton(
+            on = voxOn,
+            modifier = Modifier
+                .align(if (lefty) Alignment.BottomEnd else Alignment.BottomStart)
+                .padding(start = if (lefty) 0.dp else sidePad, end = if (lefty) sidePad else 0.dp)
+                .offset(y = 14.dp),
+        )
+    }
+}
+
+/** VOX の丸ボタン (Web版の .vox-btn): オフは灰色、オンは緑に光る。 */
+@Composable
+private fun VoxButton(on: Boolean, modifier: Modifier = Modifier) {
+    val brush: Brush = if (on) Brush.radialGradient(listOf(Color(0xFF34D399), Color(0xFF059669))) else SolidColor(Color(0xFF1F2937))
+    Column(
+        modifier
+            .then(if (on) Modifier.shadow(14.dp, CircleShape, spotColor = Color(0xFF10B981)) else Modifier)
+            .size(62.dp)
+            .clip(CircleShape)
+            .background(brush)
+            .border(3.dp, if (on) Color(0xFF065F46) else Color(0xFF374151), CircleShape)
+            .clickable { PochiEngine.setVox(!on) },
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        val c = if (on) Color(0xFF052E1C) else PochiColors.Muted
+        Text("VOX", color = c, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp, letterSpacing = 1.sp)
+        Text(if (on) "ON" else "OFF", color = c.copy(alpha = 0.85f), fontWeight = FontWeight.ExtraBold, fontSize = 10.sp)
     }
 }
 
 @Composable
 private fun VoxSection(state: UiState) {
-    SwitchRow("VOX（声を拾って自動で送信）", state.voxOn) { PochiEngine.setVox(it) }
     if (state.voxOn) {
         // メーター: 緑 = 入力レベル、黄色の線 = しきい値。しきい値を超えると赤
         Box(

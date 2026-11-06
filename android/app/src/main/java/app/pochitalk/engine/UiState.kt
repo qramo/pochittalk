@@ -44,7 +44,12 @@ data class UiState(
     val voxSens: Int = 4,
     val voxLevel: Float = 0f,
     val voxThreshold: Float = 0f,
-    val soundOn: Boolean = true,
+    /** 効果音の音量 (0〜150%)。0 で消える。 */
+    val sfxVolume: Int = 100,
+    /** 左手用: VOX ボタンを話すボタンの右側に置く。 */
+    val lefty: Boolean = false,
+    /** スピーカーのミュート (相手の声と効果音を止める。マイクは止めない)。 */
+    val speakerMuted: Boolean = false,
     /** 入力レベル (マイクの増幅)。0〜30 dB。 */
     val micGainDb: Int = 0,
     /** 設定のマイクテスト中 (入室していなくても入力レベルとメーターを確認できる)。 */

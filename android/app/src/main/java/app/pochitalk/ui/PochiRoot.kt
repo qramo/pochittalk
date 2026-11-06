@@ -86,7 +86,7 @@ fun PochiRoot(state: UiState, actions: Actions) {
             if (!inRoom) {
                 HomeScreen(state, actions, modifier = Modifier.fillMaxSize())
             } else {
-                RadioScreen(state, actions, modifier = Modifier.fillMaxSize())
+                RadioScreen(state, actions, onOpenRooms = openRooms, modifier = Modifier.fillMaxSize())
             }
             // 左端のつまみ (入室後だけ): ここをタップしても部屋一覧が開く。スワイプできることの目印
             if (inRoom) Box(

@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -24,6 +25,7 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
@@ -88,6 +90,23 @@ fun SettingsDialog(state: UiState, actions: Actions, onShowAbout: () -> Unit, on
                     onClick = { actions.micTest(!state.micTest) },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(if (state.micTest) "マイクテスト停止" else "マイクテスト開始") }
+
+                SectionTitle("操作")
+                SwitchRow("左手用（VOX ボタンを話すボタンの右側に置く）", state.lefty) { PochiEngine.setLefty(it) }
+
+                SectionTitle("効果音")
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("音量", color = PochiColors.Text, fontSize = 13.sp)
+                    Text("${state.sfxVolume}%", color = PochiColors.Sky, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                }
+                Slider(
+                    value = state.sfxVolume.toFloat(),
+                    onValueChange = { PochiEngine.setSfxVolume(((it / 5).toInt()) * 5) },
+                    onValueChangeFinished = { PochiEngine.previewSfx() },
+                    valueRange = 0f..150f,
+                    steps = 29,
+                )
+                Text("スライダーを離すと、試しに「ガッ」と鳴ります。効果音を消したいときは、音量を 0% にしてください。", color = PochiColors.Muted, fontSize = 12.sp)
 
                 SectionTitle("初回案内")
                 SwitchRow("開いたときに初回案内を表示する", state.welcomeOn) { PochiEngine.setWelcomeOn(it) }
