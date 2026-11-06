@@ -104,7 +104,8 @@ const HTML = `<!DOCTYPE html>
       flex-direction: column;
       gap: 12px;
     }
-    .status-row { display: flex; justify-content: space-between; align-items: center; }
+    .status-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 1.6rem; }
+    .status-row .indicators { flex: none; }
     .indicators { display: flex; gap: 12px; }
     .led-wrapper { display: flex; align-items: center; gap: 4px; }
     .led {
@@ -117,7 +118,7 @@ const HTML = `<!DOCTYPE html>
     .led-label { font-size: 0.7rem; font-weight: 800; color: var(--muted-color); }
     .led.tx.active { background: var(--tx-color); box-shadow: 0 0 12px var(--tx-color); }
     .led.rx.active { background: var(--rx-color); box-shadow: 0 0 12px var(--rx-color); }
-    .status-text { font-family: monospace; font-size: 1rem; font-weight: bold; color: #38bdf8; }
+    .status-text { font-family: monospace; font-size: 1rem; font-weight: bold; color: #38bdf8; line-height: 1.6rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     .peers-list {
       min-height: 24px;
       max-height: 110px;
@@ -145,11 +146,10 @@ const HTML = `<!DOCTYPE html>
     .peer-tag.talking {
       background: #064e3b;
       color: #34d399;
-      font-weight: bold;
       box-shadow: 0 0 8px rgba(16, 185, 129, 0.3);
     }
     .peer-tag.me { background: #172554; color: #bfdbfe; }
-    .peer-tag.me.sending { background: #7f1d1d; color: #fecaca; font-weight: bold; box-shadow: 0 0 8px rgba(239, 68, 68, 0.35); }
+    .peer-tag.me.sending { background: #7f1d1d; color: #fecaca; box-shadow: 0 0 8px rgba(239, 68, 68, 0.35); }
     .ptt-container { display: flex; flex-direction: column; align-items: center; gap: 14px; margin: 6px 0; }
     .ptt-btn {
       width: 170px;
@@ -191,10 +191,8 @@ const HTML = `<!DOCTYPE html>
       border-bottom: 2px solid #1f2937;
     }
 
-    .touch-only { display: none; }
     @media (hover: none) and (pointer: coarse), (max-width: 480px) {
       .pc-only { display: none; }
-      .touch-only { display: inline; }
     }
     .alpha-badge { font-size: 0.65rem; font-weight: 800; color: #fbbf24; border: 1px solid #fbbf24; border-radius: 6px; padding: 1px 6px; letter-spacing: 1px; }
     .sticky-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 10; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 16px; background: rgba(20,24,29,0.95); border-bottom: 1px solid #374151; }
@@ -223,7 +221,27 @@ const HTML = `<!DOCTYPE html>
     .level-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-family: monospace; font-size: 0.65rem; color: var(--muted-color); }
     .level { flex: 1; height: 14px; min-width: 0; }
     .gain-val { min-width: 62px; text-align: right; font-family: monospace; }
+    .level-label { min-width: 2.8em; }
     .level-db { width: 52px; text-align: right; }
+    .ptt-wrap { position: relative; width: 100%; display: flex; justify-content: center; margin-bottom: 14px; } /* VOX が下にはみ出す分の余白 */
+    /* VOX: 丸いボタン。話すボタンの左下に置く（左手用は右下） */
+    .vox-btn {
+      position: absolute; bottom: -14px; left: max(0px, calc(50% - 150px));
+      width: 62px; height: 62px; border-radius: 50%;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+      background: #1f2937; color: var(--muted-color); border: 3px solid #374151;
+      font-weight: 800; letter-spacing: 1px; cursor: pointer; outline: none; touch-action: manipulation;
+      transition: all .15s ease;
+    }
+    .ptt-wrap.lefty .vox-btn { left: auto; right: max(0px, calc(50% - 150px)); }
+    .vox-btn-main { font-size: 0.85rem; line-height: 1; }
+    .vox-btn-state { font-size: 0.62rem; line-height: 1; opacity: .85; }
+    .vox-btn:active { transform: scale(0.95); }
+    .vox-btn.on {
+      background: radial-gradient(circle, #34d399 0%, #059669 100%);
+      color: #052e1c; border-color: #065f46;
+      box-shadow: 0 0 14px rgba(16, 185, 129, 0.65);
+    }
     .tag-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.82rem; color: var(--muted-color); }
     .tag-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tag-row .btn-sub { flex: none; white-space: nowrap; }
@@ -232,6 +250,8 @@ const HTML = `<!DOCTYPE html>
     .tag-count { text-align: right; font-size: 0.72rem; color: var(--muted-color); margin-top: 4px; font-family: monospace; }
     .tag-count.full { color: #fbbf24; }
     .chip-tag { font-family: -apple-system, 'Segoe UI', sans-serif; font-size: 0.78rem; color: #93c5fd; margin-top: 2px; overflow-wrap: anywhere; max-width: 260px; }
+    .tune-actions #speakerBtn { flex: none; width: 64px; font-size: 1.15rem; padding: 6px 0; line-height: 1; white-space: nowrap; }
+    #speakerBtn.muted { background: #7f1d1d; color: #fecaca; }
     .hidden { display: none !important; }
     .home { width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 16px; }
     .lcd { text-align: center; padding: 4px 0 2px; }
@@ -313,6 +333,7 @@ const HTML = `<!DOCTYPE html>
     <header class="header">
       <div class="brand"><span>🔘</span><span>ぽちっと通話</span><span class="alpha-badge">α版</span></div>
       <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn-sub" id="reconnectBtn" type="button" style="padding:4px 10px">再接続</button>
         <button class="btn-sub" id="leaveBtn" type="button" style="padding:4px 10px">退出</button>
       </div>
     </header>
@@ -344,31 +365,29 @@ const HTML = `<!DOCTYPE html>
       <div class="peers-list" id="peersList"><span class="peers-empty">待機中（参加者なし）</span></div>
     </section>
     <section class="ptt-container">
-      <button class="ptt-btn" id="pttBtn" type="button">
-        <span class="ptt-main">POCHI</span>
-        <span class="ptt-sub">TALK</span>
-      </button>
+      <div class="ptt-wrap">
+        <button class="ptt-btn" id="pttBtn" type="button">
+          <span class="ptt-main">PUSH</span>
+          <span class="ptt-sub">TO TALK</span>
+        </button>
+        <button class="vox-btn" id="voxBtn" type="button" aria-pressed="false" title="VOX（声を拾って自動で送信）">
+          <span class="vox-btn-main">VOX</span>
+          <span class="vox-btn-state" id="voxState">OFF</span>
+        </button>
+      </div>
       <div class="controls-info">
-        <span class="pc-only"><kbd class="key-badge">Space</kbd> キーを押しながら話す<br>またはボタンを長押し</span><span class="touch-only">ボタンを押している間だけ話せます</span>
+        <span class="pc-only"><kbd class="key-badge">Space</kbd> キーでも話せます</span>
       </div>
     </section>
     <footer class="config-panel">
       <div class="tune-actions">
         <button class="btn-sub" id="shareBtn" type="button">招待URLをコピー</button>
-        <button class="btn-sub" id="reconnectBtn" type="button">再接続</button>
+        <button class="btn-sub" id="speakerBtn" type="button" title="スピーカーのミュート切り替え" aria-label="スピーカーのミュート切り替え">🔈</button>
       </div>
-      <label class="sound-toggle">
-        <input type="checkbox" id="voxCheck">
-        VOX（声を拾って自動で送信）
-      </label>
       <div class="vox-panel hidden" id="voxPanel">
         <div class="vox-meter"><div class="vox-fill" id="voxFill"></div><div class="vox-thr" id="voxThr"></div></div>
         <label class="vox-sens"><span>しきい値</span><input type="range" id="voxSens" min="1" max="10" step="1" value="6"></label>
       </div>
-      <label class="sound-toggle">
-        <input type="checkbox" id="soundEffectCheck" checked>
-        無線効果音（スケルチ音など）を鳴らす
-      </label>
     </footer>
   </main>
 
@@ -391,6 +410,11 @@ const HTML = `<!DOCTYPE html>
         <label class="vox-sens" style="margin:10px 0"><span>入力レベル</span><input type="range" id="homeGain" min="0" max="30" step="1" value="0"><span class="gain-val" id="homeGainVal">そのまま</span></label>
         <div class="level-row"><span class="level-label">MIC</span><canvas class="level" id="homeLevelCanvas" width="280" height="14"></canvas><span class="level-db" id="homeLevelDb">-∞ dB</span></div>
         <button class="btn-sub" id="micTestBtn" type="button" style="width:100%;margin-top:10px">マイクテスト開始</button>
+        <h3>操作</h3>
+        <label class="sound-toggle"><input type="checkbox" id="leftyCheck"> 左手用（VOX ボタンを話すボタンの右側に置く）</label>
+        <h3>効果音</h3>
+        <label class="vox-sens" style="margin:10px 0"><span>音量</span><input type="range" id="sfxVol" min="0" max="150" step="5" value="100"><span class="gain-val" id="sfxVolVal">100%</span></label>
+        <p style="opacity:.8;font-size:0.75rem">スライダーを離すと、試しに「ガッ」と鳴ります。効果音を消したいときは、音量を 0% にしてください。</p>
         <h3>初回案内</h3>
         <label class="sound-toggle"><input type="checkbox" id="welcomeAgain2"> 開いたときに初回案内を表示する</label>
         <h3>ソース・ライセンス</h3>
@@ -469,6 +493,8 @@ const HTML = `<!DOCTYPE html>
         <li><b>ハンドルネーム</b>: ブラウザの localStorage（キー名 pochitalk_ptt_name）に保存されます。次回開いたときに入力済みになります。この端末のブラウザの中だけにあり、運営側には送られません。ブラウザのサイトデータを消すと削除されます。</li>
         <li><b>URLの「?r=…」</b>: 今いる部屋のハッシュ値がアドレスに入ります。ブラウザの履歴に残ることがあります。</li>
         <li><b>初回案内の表示設定</b>: 初回の案内で「次回も表示する」をオフにしたときだけ、その旨を localStorage（キー名 pochitalk_welcome）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
+        <li><b>左手用の設定</b>: ONにしたときだけ、その旨を localStorage（キー名 pochitalk_lefty）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
+        <li><b>効果音の音量</b>: 0〜150%の数字を、同じく localStorage（キー名 pochitalk_sfx_vol）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
         <li><b>入力レベル</b>: マイクの増幅（0〜30dB）の数字を、同じく localStorage（キー名 pochitalk_input_db）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
         <li><b>VOXのしきい値</b>: 1〜10の数字を、同じく localStorage（キー名 pochitalk_vox_thr）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
         <li>Cookie、ログイン情報、メールアドレス、位置情報、連絡先などは、保存も取得もしません。</li>
@@ -514,7 +540,7 @@ const HTML = `<!DOCTYPE html>
     const onlineCount = document.getElementById('onlineCount');
     const peersList = document.getElementById('peersList');
     const nameInput = document.getElementById('nameInput');
-    const soundEffectCheck = document.getElementById('soundEffectCheck');
+    const soundEffectCheck = { checked: true }; // 効果音のオン・オフは廃止（音量 0% で消せる）
 
     const rxAnalysers = new Map(); // peerId -> AnalyserNode
     let sendJoinAge = null, roomEnterTime = 0;
@@ -541,6 +567,17 @@ const HTML = `<!DOCTYPE html>
     let myNickname = savedName || ('無線機_' + Math.floor(Math.random() * 899 + 100));
     nameInput.value = myNickname;
 
+    // 効果音の音量（0〜150%）。効果音はすべてこのゲインを通す。マイク（送信）には影響しない
+    let sfxVol = 1, sfxGainNode = null, speakerMuted = false;
+    function sfxOut(ctx) {
+      if (!sfxGainNode || sfxGainNode.context !== ctx) {
+        sfxGainNode = ctx.createGain();
+        sfxGainNode.connect(ctx.destination);
+      }
+      sfxGainNode.gain.value = speakerMuted ? 0 : sfxVol;
+      return sfxGainNode;
+    }
+
     function getAudioContext() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -557,7 +594,7 @@ const HTML = `<!DOCTYPE html>
         osc.frequency.setValueAtTime(1320, ctx.currentTime + 0.04);
         gain.gain.setValueAtTime(0.12, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
-        osc.connect(gain); gain.connect(ctx.destination);
+        osc.connect(gain); gain.connect(sfxOut(ctx));
         osc.start(); osc.stop(ctx.currentTime + 0.08);
       } catch (_) {}
     }
@@ -588,7 +625,7 @@ const HTML = `<!DOCTYPE html>
         for (let k = 0; k < 256; k++) { const x = (k / 128) - 1; curve[k] = Math.tanh(x * 5); }
         shaper.curve = curve;
         const g = ctx.createGain(); g.gain.value = 0.14;
-        src.connect(hp); hp.connect(lp); lp.connect(shaper); shaper.connect(g); g.connect(ctx.destination);
+        src.connect(hp); hp.connect(lp); lp.connect(shaper); shaper.connect(g); g.connect(sfxOut(ctx));
         src.start();
       } catch (_) {}
     }
@@ -603,7 +640,7 @@ const HTML = `<!DOCTYPE html>
           osc.type = 'square'; osc.frequency.value = 330;
           g.gain.setValueAtTime(0.06, ctx.currentTime + off);
           g.gain.setValueAtTime(0.001, ctx.currentTime + off + 0.08);
-          osc.connect(g); g.connect(ctx.destination);
+          osc.connect(g); g.connect(sfxOut(ctx));
           osc.start(ctx.currentTime + off); osc.stop(ctx.currentTime + off + 0.09);
         });
       } catch (_) {}
@@ -627,7 +664,7 @@ const HTML = `<!DOCTYPE html>
         const src = ctx.createBufferSource(); src.buffer = buffer;
         const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1600; bp.Q.value = 0.5;
         const g = ctx.createGain(); g.gain.value = 0.2;
-        src.connect(bp); bp.connect(g); g.connect(ctx.destination);
+        src.connect(bp); bp.connect(g); g.connect(sfxOut(ctx));
         src.start();
       } catch (_) {}
     }
@@ -664,7 +701,7 @@ const HTML = `<!DOCTYPE html>
           g.gain.setValueAtTime(0.001, t0 + start);
           g.gain.exponentialRampToValueAtTime(vol, t0 + start + 0.01);
           g.gain.exponentialRampToValueAtTime(0.001, t0 + start + dur);
-          osc.connect(g); g.connect(ctx.destination);
+          osc.connect(g); g.connect(sfxOut(ctx));
           osc.start(t0 + start); osc.stop(t0 + start + dur + 0.02);
         }
         note(1046.5, 0.00, 0.09, 0.14);   // ピ
@@ -836,6 +873,7 @@ const HTML = `<!DOCTYPE html>
           el.id = 'audio-' + peerId;
           el.autoplay = true;
           el.playsInline = true;
+          el.muted = speakerMuted;
           document.body.appendChild(el);
         }
         el.srcObject = stream;
@@ -859,13 +897,13 @@ const HTML = `<!DOCTYPE html>
       if (currentKey) {
         const me = document.createElement('span');
         me.className = 'peer-tag me' + (isTransmitting ? ' sending' : '');
-        me.textContent = (isTransmitting ? '🎙️ ' : '') + myNickname + '（自分）';
+        me.textContent = myNickname + '（自分）';
         peersList.appendChild(me);
       }
       peerMap.forEach(function (info, id) {
         const span = document.createElement('span');
         span.className = 'peer-tag' + (info.isTalking ? ' talking' : '');
-        span.textContent = (info.isTalking ? '🎙️ ' : '') + (info.name || id.slice(0, 5));
+        span.textContent = info.name || id.slice(0, 5);
         peersList.appendChild(span);
       });
       if (peerMap.size === 0) {
@@ -952,9 +990,57 @@ const HTML = `<!DOCTYPE html>
 
     pttBtn.addEventListener('mousedown', function (e) { e.preventDefault(); press(); });
     window.addEventListener('mouseup', function () { if (pressed) release(); });
-    pttBtn.addEventListener('touchstart', function (e) { e.preventDefault(); press(); }, { passive: false });
-    pttBtn.addEventListener('touchend', function (e) { e.preventDefault(); release(); }, { passive: false });
-    pttBtn.addEventListener('touchcancel', function () { release(); });
+    // タッチ操作: スワイプ中に指がボタンに触れても、話し始めないようにする
+    //   ・押してから SWIPE_HOLD_MS のあいだ、指がほぼ動かなかったときだけ送信を始める（短いタップでは送信しない）
+    //   ・指がボタンの外（SWIPE_MARGIN_PX 余裕あり）に出たらスワイプとみなし、送信を始めない／送信中なら直ちに止める
+    //     ボタンの上での指の移動（滑り）は許容する
+    const SWIPE_HOLD_MS = 120, SWIPE_MARGIN_PX = 14;
+    let touchActive = false, touchSwiped = false, touchTimer = null, touchX = 0, touchY = 0;
+
+    function endTouch() {
+      clearTimeout(touchTimer); touchTimer = null;
+      const swiped = touchSwiped;
+      touchActive = false; touchSwiped = false;
+      if (!swiped && pressed) release();
+    }
+
+    pttBtn.addEventListener('touchstart', function (e) {
+      e.preventDefault();
+      if (touchActive) return;
+      touchActive = true; touchSwiped = false;
+      const t = e.touches[0];
+      touchX = t.clientX; touchY = t.clientY;
+      clearTimeout(touchTimer);
+      touchTimer = setTimeout(function () {
+        touchTimer = null;
+        if (touchActive && !touchSwiped) press();
+      }, SWIPE_HOLD_MS);
+    }, { passive: false });
+
+    pttBtn.addEventListener('touchmove', function (e) {
+      e.preventDefault();
+      if (!touchActive || touchSwiped) return;
+      const t = e.touches[0];
+      // ボタン（円）の上にいる間は、動いてもスワイプとみなさない
+      const r = pttBtn.getBoundingClientRect();
+      const dist = Math.hypot(t.clientX - (r.left + r.width / 2), t.clientY - (r.top + r.height / 2));
+      if (dist <= r.width / 2 + SWIPE_MARGIN_PX) return;
+      touchSwiped = true;
+      clearTimeout(touchTimer); touchTimer = null;
+      if (pressed) {
+        pressed = false;
+        const wasTx = isTransmitting;
+        stopTransmissionSilently();
+        if (wasTx) {
+          const talker = currentTalkerId && peerMap.get(currentTalkerId);
+          if (talker) onStartReceiving(talker.name);
+          else { statusLabel.textContent = 'STANDBY'; statusLabel.style.color = '#38bdf8'; }
+        }
+      }
+    }, { passive: false });
+
+    pttBtn.addEventListener('touchend', function (e) { e.preventDefault(); endTouch(); }, { passive: false });
+    pttBtn.addEventListener('touchcancel', function () { endTouch(); });
 
     // スペースキーで話す。部屋の中では、ページのスクロールやボタンの誤作動を完全に止める
     let spaceHeld = false;
@@ -1010,7 +1096,7 @@ const HTML = `<!DOCTYPE html>
 
     function leaveRoom() {
       if (isTransmitting) { pressed = false; stopTransmission(); }
-      if (voxCheck.checked) { voxCheck.checked = false; stopVox(); }
+      if (voxCheck.checked) { setVoxUI(false); stopVox(); }
       if (room) { room.leave(); room = null; }
       releaseMic();
       sendPttState = null; sendNickname = null; sendJoinAge = null; sendTag = null;
@@ -1297,7 +1383,14 @@ const HTML = `<!DOCTYPE html>
     aboutDialog.addEventListener('click', function (e) { if (e.target === aboutDialog) aboutDialog.close(); });
 
     // ---------- VOX（声を拾って自動で送信）----------
-    const voxCheck = document.getElementById('voxCheck');
+    const voxCheck = { checked: false }; // VOX が ON か（ボタンで切り替える）
+    const voxBtn = document.getElementById('voxBtn'), voxState = document.getElementById('voxState');
+    function setVoxUI(on) {
+      voxCheck.checked = on;
+      voxBtn.classList.toggle('on', on);
+      voxBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      voxState.textContent = on ? 'ON' : 'OFF';
+    }
     const voxPanel = document.getElementById('voxPanel');
     const voxFill = document.getElementById('voxFill');
     const voxThrEl = document.getElementById('voxThr');
@@ -1347,7 +1440,7 @@ const HTML = `<!DOCTYPE html>
     async function startVox() {
       getAudioContext();
       const ok = await initMicrophone();
-      if (!ok || !txAnalyser) { voxCheck.checked = false; return; }
+      if (!ok || !txAnalyser) { setVoxUI(false); return; }
       voxAnalyser = txAnalyser; // 入力レベル調整後の音量で判定する
       voxBuf = new Float32Array(voxAnalyser.fftSize);
       voxPanel.classList.remove('hidden');
@@ -1364,7 +1457,11 @@ const HTML = `<!DOCTYPE html>
       voxInitiated = false;
     }
 
-    voxCheck.addEventListener('change', function () { if (voxCheck.checked) startVox(); else stopVox(); });
+    voxBtn.addEventListener('click', function () {
+      if (!voxCheck.checked) { setVoxUI(true); startVox(); }
+      else { setVoxUI(false); stopVox(); }
+      voxBtn.blur();
+    });
     try {
       const savedSens = parseInt(localStorage.getItem('pochitalk_vox_thr'), 10);
       if (savedSens >= 1 && savedSens <= 10) voxSens.value = savedSens;
@@ -1444,6 +1541,45 @@ const HTML = `<!DOCTYPE html>
     }
     try { setInputDb(localStorage.getItem('pochitalk_input_db'), false); } catch (_) { setInputDb(0, false); }
     homeGain.addEventListener('input', function () { setInputDb(homeGain.value, true); });
+
+    // ---------- スピーカーミュート（相手の声と効果音を止める。マイクは止めない）----------
+    const speakerBtn = document.getElementById('speakerBtn');
+    function applySpeakerMute() {
+      document.querySelectorAll('audio[id^="audio-"]').forEach(function (a) { a.muted = speakerMuted; });
+      if (sfxGainNode) sfxGainNode.gain.value = speakerMuted ? 0 : sfxVol;
+      speakerBtn.textContent = speakerMuted ? '🔇' : '🔈';
+      speakerBtn.setAttribute('aria-pressed', speakerMuted ? 'true' : 'false');
+      speakerBtn.classList.toggle('muted', speakerMuted);
+    }
+    speakerBtn.addEventListener('click', function () {
+      speakerMuted = !speakerMuted;
+      applySpeakerMute();
+      flashSub(speakerMuted ? 'スピーカーをミュートしました' : 'スピーカーのミュートを解除しました');
+    });
+
+    // ---------- 左手用（VOX ボタンの位置）----------
+    const leftyCheck = document.getElementById('leftyCheck'), pttWrap = document.querySelector('.ptt-wrap');
+    function setLefty(on, save) {
+      leftyCheck.checked = on;
+      pttWrap.classList.toggle('lefty', on);
+      if (save) { try { if (on) localStorage.setItem('pochitalk_lefty', '1'); else localStorage.removeItem('pochitalk_lefty'); } catch (_) {} }
+    }
+    try { setLefty(localStorage.getItem('pochitalk_lefty') === '1', false); } catch (_) { setLefty(false, false); }
+    leftyCheck.addEventListener('change', function () { setLefty(leftyCheck.checked, true); });
+
+    // ---------- 効果音の音量 ----------
+    const sfxVolEl = document.getElementById('sfxVol'), sfxVolVal = document.getElementById('sfxVolVal');
+    function setSfxVol(v, save) {
+      const n = Math.min(150, Math.max(0, parseInt(v, 10)));
+      sfxVol = isNaN(n) ? 1 : n / 100;
+      sfxVolEl.value = Math.round(sfxVol * 100);
+      sfxVolVal.textContent = Math.round(sfxVol * 100) + '%';
+      if (sfxGainNode) sfxGainNode.gain.value = speakerMuted ? 0 : sfxVol;
+      if (save) { try { localStorage.setItem('pochitalk_sfx_vol', String(Math.round(sfxVol * 100))); } catch (_) {} }
+    }
+    try { const sv = localStorage.getItem('pochitalk_sfx_vol'); setSfxVol(sv === null ? 100 : sv, false); } catch (_) { setSfxVol(100, false); }
+    sfxVolEl.addEventListener('input', function () { setSfxVol(sfxVolEl.value, true); });
+    sfxVolEl.addEventListener('change', function () { getAudioContext(); playPttEndTone(); }); // 離したら試し聴き
 
     // ホームのマイクテスト（入室しなくても、入力レベルとメーターを確認できる）
     const micTestBtn = document.getElementById('micTestBtn');
