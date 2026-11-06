@@ -119,26 +119,28 @@ const HTML = `<!DOCTYPE html>
     .led.rx.active { background: var(--rx-color); box-shadow: 0 0 12px var(--rx-color); }
     .status-text { font-family: monospace; font-size: 1rem; font-weight: bold; color: #38bdf8; }
     .peers-list {
-      min-height: 48px;
-      max-height: 84px;
+      min-height: 24px;
+      max-height: 110px;
       overflow-y: auto;
       font-size: 0.85rem;
       color: var(--muted-color);
       border-top: 1px dashed #2d3748;
-      padding-top: 8px;
+      padding-top: 6px;
       display: flex;
       flex-wrap: wrap;
-      gap: 6px;
+      align-content: flex-start;
+      gap: 4px;
     }
     .peers-empty { opacity: 0.5; }
     .peer-tag {
       background: #1e293b;
-      padding: 2px 8px;
+      padding: 0 8px;
+      line-height: 1.5;
       border-radius: 6px;
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      font-size: 0.8rem;
+      font-size: 0.78rem;
     }
     .peer-tag.talking {
       background: #064e3b;
@@ -146,6 +148,8 @@ const HTML = `<!DOCTYPE html>
       font-weight: bold;
       box-shadow: 0 0 8px rgba(16, 185, 129, 0.3);
     }
+    .peer-tag.me { background: #172554; color: #bfdbfe; }
+    .peer-tag.me.sending { background: #7f1d1d; color: #fecaca; font-weight: bold; box-shadow: 0 0 8px rgba(239, 68, 68, 0.35); }
     .ptt-container { display: flex; flex-direction: column; align-items: center; gap: 14px; margin: 6px 0; }
     .ptt-btn {
       width: 170px;
@@ -726,6 +730,7 @@ const HTML = `<!DOCTYPE html>
     function connectToChannel(key) {
       roomEnterTime = Date.now();
       roomMeta = { tag: '', by: '', at: 0 };
+      closeTagForm(); // 部屋を移ったら、開いていた編集欄は閉じる
       renderTagRow();
       const roomId = 'h-' + key;
       if (room) {
@@ -849,17 +854,26 @@ const HTML = `<!DOCTYPE html>
     }
 
     function renderPeers() {
-      if (peerMap.size === 0) {
-        peersList.innerHTML = '<span class="peers-empty">待機中（参加者なし）</span>';
-        return;
-      }
       peersList.innerHTML = '';
+      // 自分（入室中のみ）。話しているときは赤で光る
+      if (currentKey) {
+        const me = document.createElement('span');
+        me.className = 'peer-tag me' + (isTransmitting ? ' sending' : '');
+        me.textContent = (isTransmitting ? '🎙️ ' : '') + myNickname + '（自分）';
+        peersList.appendChild(me);
+      }
       peerMap.forEach(function (info, id) {
         const span = document.createElement('span');
         span.className = 'peer-tag' + (info.isTalking ? ' talking' : '');
-        span.textContent = (info.isTalking ? '🎙️ ' : '👤 ') + (info.name || id.slice(0, 5));
+        span.textContent = (info.isTalking ? '🎙️ ' : '') + (info.name || id.slice(0, 5));
         peersList.appendChild(span);
       });
+      if (peerMap.size === 0) {
+        const none = document.createElement('span');
+        none.className = 'peers-empty';
+        none.textContent = currentKey ? '（ほかの参加者を待っています）' : '待機中（参加者なし）';
+        peersList.appendChild(none);
+      }
     }
 
     function onStartReceiving(name) {
@@ -891,6 +905,7 @@ const HTML = `<!DOCTYPE html>
       if (!pressed) return; // 許可ダイアログ中に指を離した場合
       if (othersTalking() > 0) { if (!quiet) { playBusyTone(); flashSub('話中です'); } return; }
       isTransmitting = true;
+      renderPeers();
       localAudioTrack.enabled = true;
       pttBtn.classList.add('transmitting');
       ledTx.classList.add('active');
@@ -907,6 +922,7 @@ const HTML = `<!DOCTYPE html>
       if (localAudioTrack) localAudioTrack.enabled = false;
       pttBtn.classList.remove('transmitting');
       ledTx.classList.remove('active');
+      renderPeers();
       if (sendPttState) sendPttState({ isTalking: false });
       announce();
     }
@@ -925,6 +941,7 @@ const HTML = `<!DOCTYPE html>
         statusLabel.style.color = '#38bdf8';
       }
       playPttEndTone();
+      renderPeers();
       if (sendPttState) sendPttState({ isTalking: false });
       announce();
     }
@@ -939,23 +956,43 @@ const HTML = `<!DOCTYPE html>
     pttBtn.addEventListener('touchend', function (e) { e.preventDefault(); release(); }, { passive: false });
     pttBtn.addEventListener('touchcancel', function () { release(); });
 
+    // スペースキーで話す。部屋の中では、ページのスクロールやボタンの誤作動を完全に止める
+    let spaceHeld = false;
+    function isTyping() {
+      const el = document.activeElement;
+      if (!el) return false;
+      if (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true;
+      return el.tagName === 'INPUT' && /^(text|search|url|email|number|password|tel)$/.test(el.type || 'text');
+    }
+    function spaceActive() {
+      return !!currentKey && !document.getElementById('radioView').classList.contains('hidden')
+        && !document.querySelector('dialog[open]') && !isTyping();
+    }
+
     window.addEventListener('keydown', function (e) {
-      if (e.code === 'Space' && !e.repeat) {
-        const tag = document.activeElement && document.activeElement.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.code !== 'Space') return;
+      if (!spaceActive()) {
+        // 部屋の外（ホーム画面など）でも、スペースキーでページがスクロールしないようにする。
+        // 入力欄・ダイアログの中と、ボタンやチェックにフォーカスがあるときは、通常どおり。
+        if (isTyping() || document.querySelector('dialog[open]')) return;
+        const f = document.activeElement;
+        if (f && (f.tagName === 'BUTTON' || f.tagName === 'A' || f.tagName === 'INPUT' || f.tagName === 'SUMMARY')) return;
         e.preventDefault();
-        press();
+        return;
       }
+      e.preventDefault(); // 押しっぱなし（repeat）のスクロールも止める
+      const el = document.activeElement;
+      if (el && el !== document.body && el.blur) el.blur(); // フォーカス中のボタンやチェックが、スペースで動かないように
+      if (!e.repeat && !spaceHeld) { spaceHeld = true; press(); }
     });
 
     window.addEventListener('keyup', function (e) {
-      if (e.code === 'Space') {
-        const tag = document.activeElement && document.activeElement.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-        e.preventDefault();
-        release();
-      }
+      if (e.code !== 'Space') return;
+      // 押している間にダイアログが開いても、送信が止まらなくならないように、離したら必ず終える
+      if (spaceHeld) { e.preventDefault(); spaceHeld = false; release(); return; }
+      if (spaceActive()) e.preventDefault();
     });
+    window.addEventListener('blur', function () { if (spaceHeld) { spaceHeld = false; release(); } });
 
     // ---------- 部屋(ハッシュ周波数)操作 ----------
     let pendingKey = null; // 招待URLで指定された部屋（まだ入室していない）
@@ -1010,6 +1047,7 @@ const HTML = `<!DOCTYPE html>
       }, 45);
       endMicTest();
       connectToChannel(currentKey);
+      renderPeers();
       // 入室のタップ操作の中でマイクの許可を求める（許可されなければ、話すときにもう一度確認する）
       initMicrophone(true).then(function (ok) {
         if (!ok && room && !userMediaStream) flashSub('マイクが許可されていません。話すときに再度確認します');
@@ -1080,6 +1118,12 @@ const HTML = `<!DOCTYPE html>
       tagCount.textContent = n;
       tagCount.parentNode.classList.toggle('full', n >= TAG_MAX);
     }
+    // 編集中は「やめる」、それ以外は「つける / 変える」
+    function syncTagBtn() {
+      const open = !tagForm.classList.contains('hidden');
+      tagEditBtn.textContent = open ? 'やめる' : (roomMeta.tag ? '変える' : 'つける');
+    }
+    function closeTagForm() { tagForm.classList.add('hidden'); syncTagBtn(); }
     function renderTagRow() {
       tagTextEl.replaceChildren();
       if (roomMeta.tag) {
@@ -1087,12 +1131,11 @@ const HTML = `<!DOCTYPE html>
         const by = document.createElement('span'); by.className = 'tag-by'; by.textContent = roomMeta.by ? '（' + roomMeta.by + 'が付けた）' : '';
         tagTextEl.append('🏷 ', b, by);
         tagTextEl.title = roomMeta.tag + (roomMeta.by ? '（' + roomMeta.by + 'が付けた）' : '');
-        tagEditBtn.textContent = '変える';
       } else {
         tagTextEl.textContent = '🏷 話題タグ：まだありません';
         tagTextEl.title = '';
-        tagEditBtn.textContent = 'つける';
       }
+      syncTagBtn();
     }
     function setTag(text) {
       if (!currentKey) return;
@@ -1103,12 +1146,13 @@ const HTML = `<!DOCTYPE html>
     }
     tagEditBtn.addEventListener('click', function () {
       tagForm.classList.toggle('hidden');
+      syncTagBtn();
       if (!tagForm.classList.contains('hidden')) { tagInput.value = roomMeta.tag || ''; updateTagCount(); tagInput.focus(); const end = tagInput.value.length; tagInput.setSelectionRange(end, end); } // 前のタグを残し、末尾から書き換え始める
     });
     tagInput.addEventListener('input', updateTagCount);
-    document.getElementById('tagSend').addEventListener('click', function () { setTag(tagInput.value); tagForm.classList.add('hidden'); });
+    document.getElementById('tagSend').addEventListener('click', function () { setTag(tagInput.value); closeTagForm(); });
     tagInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); setTag(tagInput.value); tagForm.classList.add('hidden'); }
+      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); setTag(tagInput.value); closeTagForm(); }
     });
     renderTagRow();
 
