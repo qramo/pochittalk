@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ぽちっと通話</string>
+    <string name="notification_channel">通話中</string>
+    <string name="notification_text">部屋 %1$s で通話中</string>
+    <string name="leave">退出</string>
+</resources>

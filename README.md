@@ -14,3 +14,7 @@ Cloudflare Workers の単一ファイル (`worker.js`) で動きます。
 
 ## assets/
 ファビコン・OGP 画像の線画 SVG（PNG は `worker.js` に埋め込み済み）。
+
+## android/
+Kotlin のネイティブ Android アプリ (α・未ビルド)。Web 版と同じ部屋で相互に通話できます。
+ビルド手順・検証状況・実機テストのチェックリストは [android/README.md](android/README.md)。
