@@ -220,6 +220,13 @@ const HTML = `<!DOCTYPE html>
     .level { flex: 1; height: 14px; min-width: 0; }
     .gain-val { min-width: 62px; text-align: right; font-family: monospace; }
     .level-db { width: 52px; text-align: right; }
+    .tag-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.82rem; color: var(--muted-color); }
+    .tag-text { min-width: 0; overflow-wrap: anywhere; }
+    .tag-text b { color: var(--text-color); }
+    .tag-by { font-size: 0.72rem; margin-left: 4px; opacity: .8; }
+    .tag-count { text-align: right; font-size: 0.72rem; color: var(--muted-color); margin-top: 4px; font-family: monospace; }
+    .tag-count.full { color: #fbbf24; }
+    .chip-tag { font-family: -apple-system, 'Segoe UI', sans-serif; font-size: 0.78rem; color: #93c5fd; margin-top: 2px; overflow-wrap: anywhere; max-width: 260px; }
     .hidden { display: none !important; }
     .home { width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 16px; }
     .lcd { text-align: center; padding: 4px 0 2px; }
@@ -311,6 +318,17 @@ const HTML = `<!DOCTYPE html>
         <div class="lcd-sub" id="lcdSub"></div>
         <div class="level-row"><span class="level-label" id="levelLabel">LEVEL</span><canvas class="level" id="levelCanvas" width="280" height="14"></canvas><span class="level-db" id="levelDb">-∞ dB</span></div>
       </div>
+      <div class="tag-row">
+        <span class="tag-text" id="tagText"></span>
+        <button class="btn-sub" id="tagEdit" type="button" style="padding:4px 10px;font-size:0.75rem">つける</button>
+      </div>
+      <div class="hidden" id="tagForm">
+        <div class="input-row">
+          <input type="text" id="tagInput" maxlength="30" placeholder="いまの話題（例：ゲームの話）" autocomplete="off">
+          <button class="btn-sub" id="tagSend" type="button">確定</button>
+        </div>
+        <div class="tag-count"><span id="tagCount">0</span> / 30 文字</div>
+      </div>
       <div class="status-row">
         <div class="indicators">
           <div class="led-wrapper"><span class="led tx" id="ledTx"></span><span class="led-label">TX</span></div>
@@ -350,6 +368,7 @@ const HTML = `<!DOCTYPE html>
 
   <section class="room-panel" style="margin-top:16px">
       <div class="scan-title"><span>いまある部屋（タップで入る）</span><span id="onlineCount"></span></div>
+      <input type="text" id="searchInput" placeholder="🔍 URL・ハッシュ・名前・話題で絞り込み" autocomplete="off" style="width:100%;flex:none">
       <div class="scan-list" id="scanList"><span class="peers-empty">スキャン中...</span></div>
   </section>
 
@@ -416,6 +435,7 @@ const HTML = `<!DOCTYPE html>
         <li>入室後は、大きなボタンを押している間だけ話せます（PCではスペースキーも使えます）。</li>
         <li>「招待URLをコピー」で友達にURLを送ると、同じ部屋に入れます。</li>
         <li>誰かが話している間は話せません（話中）。同時に押すと混線して、どちらも送信が切れます。</li>
+        <li>部屋の中では、「話題タグ」をつけられます（30文字まで）。誰でも変えられ、付けた人の名前が添えられます。部屋の一覧にも表示されます。</li>
         <li>人数の目安は1部屋あたり6〜8人までです。</li>
       </ul>
 
@@ -423,6 +443,7 @@ const HTML = `<!DOCTYPE html>
       <h4>誰に何が見えるか</h4>
       <ul>
         <li><b>ハンドルネーム・今いる部屋・話し中かどうか</b>は、このアプリを同時に開いている全員に見えます（部屋一覧のため）。本名や個人が特定できる名前は使わないでください。</li>
+        <li><b>話題タグ</b>と、付けた人のハンドルネームも、一覧で全員に見えます。個人情報は書かないでください。</li>
         <li><b>部屋は公開です。</b>部屋のハッシュ値は一覧に出るので、誰でもタップして入れます。秘密の話をする用途には向いていません。</li>
         <li><b>同じ部屋の人には、あなたのIPアドレスが見える</b>ことがあります。通話が端末どうしの直接通信（P2P）で行われるためです。</li>
         <li>同じ部屋の誰かが、自分の端末で通話を録音する可能性はあります。このアプリには防ぐ仕組みはありません。</li>
@@ -490,6 +511,7 @@ const HTML = `<!DOCTYPE html>
 
     const rxAnalysers = new Map(); // peerId -> AnalyserNode
     let sendJoinAge = null, roomEnterTime = 0;
+    let sendTag = null, roomMeta = { tag: '', by: '', at: 0 }; // 話題タグ（誰でも上書き・新しいものが勝つ）
     let txAnalyser = null;
     let sendStream = null, micGain = null, micSrc = null, micTest = false, inputDb = 0;
     let audioCtx = null, userMediaStream = null, localAudioTrack = null;
@@ -700,6 +722,8 @@ const HTML = `<!DOCTYPE html>
 
     function connectToChannel(key) {
       roomEnterTime = Date.now();
+      roomMeta = { tag: '', by: '', at: 0 };
+      renderTagRow();
       const roomId = 'h-' + key;
       if (room) {
         room.leave();
@@ -725,6 +749,15 @@ const HTML = `<!DOCTYPE html>
       const nameAction = room.makeAction('pttName');
       sendPttState = pttStateAction[0];
       sendNickname = nameAction[0];
+
+      // 話題タグ: 全員へ送る。新しい(at が大きい)ほうを採用する
+      const tagAction = room.makeAction('roomTag');
+      sendTag = tagAction[0];
+      tagAction[1](function (data) {
+        if (!data || typeof data.at !== 'number' || data.at <= roomMeta.at) return;
+        roomMeta = { tag: capTag(data.tag), by: String(data.by || '').slice(0, 12), at: data.at };
+        renderTagRow(); announce(); renderScan();
+      });
 
       // 入室してからの経過時間を交換し、新しく来たほうを判定する（既存の人にだけ入室音を鳴らす）
       const joinAction = room.makeAction('joinAge');
@@ -769,6 +802,7 @@ const HTML = `<!DOCTYPE html>
         renderPeers();
         sendNickname(myNickname, peerId);
         if (sendJoinAge) sendJoinAge({ age: Date.now() - roomEnterTime }, peerId);
+        if (sendTag && roomMeta.at > 0) sendTag(roomMeta, peerId); // 後から来た人にも今のタグを伝える
         // 相手が経過時間を送ってこない場合（別の実装など）: 自分が20秒以上いるなら、相手は新規とみなす
         const ageAtJoin = Date.now() - roomEnterTime;
         setTimeout(function () {
@@ -939,7 +973,7 @@ const HTML = `<!DOCTYPE html>
       if (voxCheck.checked) { voxCheck.checked = false; stopVox(); }
       if (room) { room.leave(); room = null; }
       releaseMic();
-      sendPttState = null; sendNickname = null; sendJoinAge = null;
+      sendPttState = null; sendNickname = null; sendJoinAge = null; sendTag = null;
       peerMap.clear();
       currentTalkerId = null;
       document.querySelectorAll('audio[id^="audio-"]').forEach(function (a) { a.remove(); });
@@ -987,7 +1021,7 @@ const HTML = `<!DOCTYPE html>
 
     function announce(peerId) {
       if (!sendPresence || !currentKey) return;
-      const msg = { ch: currentKey, talking: isTransmitting, name: myNickname };
+      const msg = { ch: currentKey, talking: isTransmitting, name: myNickname, tag: roomMeta.tag, by: roomMeta.by, at: roomMeta.at };
       if (peerId) sendPresence(msg, peerId); else sendPresence(msg);
     }
 
@@ -997,7 +1031,7 @@ const HTML = `<!DOCTYPE html>
       sendPresence = act[0];
       act[1](function (data, peerId) {
         if (!data || typeof data.ch !== 'string' || !isKey(data.ch)) return;
-        lobbyEntries.set(peerId, { ch: data.ch, talking: !!data.talking, name: String(data.name || '?').slice(0, 12), ts: Date.now() });
+        lobbyEntries.set(peerId, { ch: data.ch, talking: !!data.talking, name: String(data.name || '?').slice(0, 12), tag: capTag(data.tag), by: String(data.by || '').slice(0, 12), at: typeof data.at === 'number' ? data.at : 0, ts: Date.now() });
         renderScan();
       });
       lobbyRoom.onPeerJoin(function (peerId) { announce(peerId); });
@@ -1013,26 +1047,104 @@ const HTML = `<!DOCTYPE html>
     function roomStats() {
       const stats = new Map();
       lobbyEntries.forEach(function (v) {
-        const e = stats.get(v.ch) || { count: 0, air: false, names: [] };
+        const e = stats.get(v.ch) || { count: 0, air: false, names: [], tag: '', tagBy: '', tagAt: 0 };
         e.count++; e.names.push(v.name); if (v.talking) e.air = true;
+        if (v.at > e.tagAt) { e.tagAt = v.at; e.tag = v.tag; e.tagBy = v.by; }
         stats.set(v.ch, e);
       });
       if (currentKey) {
-        const me = stats.get(currentKey) || { count: 0, air: false, names: [] };
+        const me = stats.get(currentKey) || { count: 0, air: false, names: [], tag: '', tagBy: '', tagAt: 0 };
+        if (roomMeta.at > me.tagAt) { me.tagAt = roomMeta.at; me.tag = roomMeta.tag; me.tagBy = roomMeta.by; }
         me.count++; me.names.unshift(myNickname + '(自分)'); if (isTransmitting) me.air = true;
         stats.set(currentKey, me);
       }
       return stats;
     }
 
+    // ---------- 話題タグ ----------
+    const TAG_MAX = 30;
+    function charLen(t) { return Array.from(String(t || '')).length; }
+    function capTag(t) {
+      return Array.from(String(t || '')).filter(function (c) { const n = c.charCodeAt(0); return n >= 32 && n !== 127; }).slice(0, TAG_MAX).join('').trim();
+    }
+    const tagTextEl = document.getElementById('tagText'), tagEditBtn = document.getElementById('tagEdit');
+    const tagForm = document.getElementById('tagForm'), tagInput = document.getElementById('tagInput');
+    const tagCount = document.getElementById('tagCount');
+    function updateTagCount() {
+      const n = charLen(tagInput.value);
+      tagCount.textContent = n;
+      tagCount.parentNode.classList.toggle('full', n >= TAG_MAX);
+    }
+    function renderTagRow() {
+      tagTextEl.replaceChildren();
+      if (roomMeta.tag) {
+        const b = document.createElement('b'); b.textContent = roomMeta.tag;
+        const by = document.createElement('span'); by.className = 'tag-by'; by.textContent = roomMeta.by ? '（' + roomMeta.by + 'が付けた）' : '';
+        tagTextEl.append('🏷 いまの話題：', b, by);
+        tagEditBtn.textContent = '変える';
+      } else {
+        tagTextEl.textContent = '🏷 話題タグ：まだありません';
+        tagEditBtn.textContent = 'つける';
+      }
+    }
+    function setTag(text) {
+      if (!currentKey) return;
+      const t = capTag(text);
+      roomMeta = { tag: t, by: t ? myNickname : '', at: Date.now() };
+      if (sendTag) sendTag(roomMeta);
+      renderTagRow(); announce(); renderScan();
+    }
+    tagEditBtn.addEventListener('click', function () {
+      tagForm.classList.toggle('hidden');
+      if (!tagForm.classList.contains('hidden')) { tagInput.value = roomMeta.tag || ''; updateTagCount(); tagInput.focus(); const end = tagInput.value.length; tagInput.setSelectionRange(end, end); } // 前のタグを残し、末尾から書き換え始める
+    });
+    tagInput.addEventListener('input', updateTagCount);
+    document.getElementById('tagSend').addEventListener('click', function () { setTag(tagInput.value); tagForm.classList.add('hidden'); });
+    tagInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); setTag(tagInput.value); tagForm.classList.add('hidden'); }
+    });
+    renderTagRow();
+
+    const searchInput = document.getElementById('searchInput');
+
+    // 検索語から、絞り込みの条件を作る（部屋のURL / ハッシュ / ニックネーム）
+    function parseSearch() {
+      const q = searchInput.value.trim();
+      if (!q) return null;
+      const m = q.match(/[?&]r=([0-9a-fA-F]{8})(?![0-9a-fA-F])/);
+      const hexq = q.toLowerCase().replace(/[· -]/g, ''); // 区切り（· - 空白）を無視
+      const exact = m ? m[1].toLowerCase() : (/^[0-9a-f]{8}$/.test(hexq) ? hexq : null);
+      return { text: q.toLowerCase(), hex: /^[0-9a-f]{2,8}$/.test(hexq) ? hexq : null, exact: exact };
+    }
+
+    function matchSearch(key, st, f) {
+      if (f.exact) return key === f.exact;
+      if (f.hex && key.indexOf(f.hex) >= 0) return true;
+      if (st.tag && st.tag.toLowerCase().indexOf(f.text) >= 0) return true;
+      return st.names.some(function (n) { return n.toLowerCase().indexOf(f.text) >= 0; });
+    }
+
     function renderScan() {
       const stats = roomStats();
       if (pendingKey && !stats.has(pendingKey)) stats.set(pendingKey, { count: 0, air: false, names: [], invited: true });
-      const keys = Array.from(stats.keys()).sort();
+      const f = parseSearch();
+      // URLやハッシュで指定された部屋に、いま誰もいない場合も、入れるように出す
+      if (f && f.exact && !stats.has(f.exact)) stats.set(f.exact, { count: 0, air: false, names: [], empty: true });
+      const allKeys = Array.from(stats.keys()).sort();
+      const keys = f ? allKeys.filter(function (k) { return matchSearch(k, stats.get(k), f); }) : allKeys;
       let total = 0;
       stats.forEach(function (v) { total += v.count; });
-      onlineCount.textContent = '👥 ' + total + '人 / ' + keys.length + '部屋';
+      onlineCount.textContent = f
+        ? '🔍 ' + keys.length + ' / ' + allKeys.length + '部屋'
+        : '👥 ' + total + '人 / ' + allKeys.length + '部屋';
       scanList.innerHTML = '';
+      if (f && !keys.length) {
+        const none = document.createElement('span');
+        none.className = 'peers-empty';
+        none.textContent = '該当する部屋がありません';
+        scanList.appendChild(none);
+        return;
+      }
       keys.forEach(function (key) {
         const st = stats.get(key);
         const b = document.createElement('button');
@@ -1040,14 +1152,18 @@ const HTML = `<!DOCTYPE html>
         b.className = 'chan-chip' + (key === currentKey ? ' me' : '') + (st.air ? ' air' : '');
         const head = document.createElement('div');
         head.textContent = (st.air ? '🔴 ' : '🔵 ') + fmt(key) + ' · 👤' + st.count + (key === pendingKey ? ' · 招待' : '');
+        const tg = document.createElement('div');
+        tg.className = 'chip-tag';
+        if (st.tag) { tg.textContent = '🏷 ' + st.tag + (st.tagBy ? '（' + st.tagBy + '）' : ''); }
         const who = document.createElement('div');
         who.className = 'chip-who';
-        who.textContent = st.invited ? '招待された部屋（現在は無人）' : st.names.join('、');
-        b.appendChild(head); b.appendChild(who);
+        who.textContent = st.invited ? '招待された部屋（現在は無人）' : st.empty ? 'この部屋には、いま誰もいません（タップで入る）' : st.names.join('、');
+        b.appendChild(head); if (st.tag) b.appendChild(tg); b.appendChild(who);
         b.addEventListener('click', function () { tuneKey(key); });
         scanList.appendChild(b);
       });
     }
+    searchInput.addEventListener('input', renderScan);
 
     document.getElementById('emptyBtn').addEventListener('click', function () {
       const key = toHex(crypto.getRandomValues(new Uint8Array(4)));
