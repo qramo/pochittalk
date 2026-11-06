@@ -221,7 +221,8 @@ const HTML = `<!DOCTYPE html>
     .gain-val { min-width: 62px; text-align: right; font-family: monospace; }
     .level-db { width: 52px; text-align: right; }
     .tag-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.82rem; color: var(--muted-color); }
-    .tag-text { min-width: 0; overflow-wrap: anywhere; }
+    .tag-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tag-row .btn-sub { flex: none; white-space: nowrap; }
     .tag-text b { color: var(--text-color); }
     .tag-by { font-size: 0.72rem; margin-left: 4px; opacity: .8; }
     .tag-count { text-align: right; font-size: 0.72rem; color: var(--muted-color); margin-top: 4px; font-family: monospace; }
@@ -350,6 +351,7 @@ const HTML = `<!DOCTYPE html>
     <footer class="config-panel">
       <div class="tune-actions">
         <button class="btn-sub" id="shareBtn" type="button">招待URLをコピー</button>
+        <button class="btn-sub" id="reconnectBtn" type="button">再接続</button>
       </div>
       <label class="sound-toggle">
         <input type="checkbox" id="voxCheck">
@@ -436,6 +438,7 @@ const HTML = `<!DOCTYPE html>
         <li>「招待URLをコピー」で友達にURLを送ると、同じ部屋に入れます。</li>
         <li>誰かが話している間は話せません（話中）。同時に押すと混線して、どちらも送信が切れます。</li>
         <li>部屋の中では、「話題タグ」をつけられます（30文字まで）。誰でも変えられ、付けた人の名前が添えられます。部屋の一覧にも表示されます。</li>
+        <li>相手が見つからない、声が届かなくなったときは、「再接続」を押すと、部屋に入ったまま接続をやり直します。回線が戻ったときや、しばらく画面を離れて戻ったときは、自動でやり直します。</li>
         <li>人数の目安は1部屋あたり6〜8人までです。</li>
       </ul>
 
@@ -1025,7 +1028,9 @@ const HTML = `<!DOCTYPE html>
       if (peerId) sendPresence(msg, peerId); else sendPresence(msg);
     }
 
+    let lobbyTimer = null;
     function joinLobby() {
+      clearInterval(lobbyTimer);
       lobbyRoom = joinRoom({ appId: 'pochitalk-walkie-talkie-cf-worker' }, 'pochitalk-lobby');
       const act = lobbyRoom.makeAction('presence');
       sendPresence = act[0];
@@ -1036,7 +1041,7 @@ const HTML = `<!DOCTYPE html>
       });
       lobbyRoom.onPeerJoin(function (peerId) { announce(peerId); });
       lobbyRoom.onPeerLeave(function (peerId) { lobbyEntries.delete(peerId); renderScan(); });
-      setInterval(function () {
+      lobbyTimer = setInterval(function () {
         const now = Date.now();
         lobbyEntries.forEach(function (v, k) { if (now - v.ts > 15000) lobbyEntries.delete(k); });
         announce();
@@ -1080,10 +1085,12 @@ const HTML = `<!DOCTYPE html>
       if (roomMeta.tag) {
         const b = document.createElement('b'); b.textContent = roomMeta.tag;
         const by = document.createElement('span'); by.className = 'tag-by'; by.textContent = roomMeta.by ? '（' + roomMeta.by + 'が付けた）' : '';
-        tagTextEl.append('🏷 いまの話題：', b, by);
+        tagTextEl.append('🏷 ', b, by);
+        tagTextEl.title = roomMeta.tag + (roomMeta.by ? '（' + roomMeta.by + 'が付けた）' : '');
         tagEditBtn.textContent = '変える';
       } else {
         tagTextEl.textContent = '🏷 話題タグ：まだありません';
+        tagTextEl.title = '';
         tagEditBtn.textContent = 'つける';
       }
     }
@@ -1164,6 +1171,51 @@ const HTML = `<!DOCTYPE html>
       });
     }
     searchInput.addEventListener('input', renderScan);
+
+    // ---------- 再接続（部屋には入ったまま、通話とロビーの接続を張り直す）----------
+    let reconnecting = false, hiddenAt = 0;
+    async function reconnectRoom(auto) {
+      if (!currentKey || reconnecting) return;
+      reconnecting = true;
+      const btn = document.getElementById('reconnectBtn');
+      btn.disabled = true;
+      try {
+        if (isTransmitting) { pressed = false; stopTransmission(); }
+        flashSub(auto ? '接続が切れた可能性があるので、つなぎ直しています…' : '再接続中…');
+        const key = currentKey, meta = roomMeta, enter = roomEnterTime;
+        const oldRoom = room, oldLobby = lobbyRoom;
+        // 古い接続を片付ける（マイクと、部屋に入っている状態はそのまま）
+        room = null; lobbyRoom = null;
+        sendPttState = null; sendNickname = null; sendJoinAge = null; sendTag = null; sendPresence = null;
+        peerMap.clear(); rxAnalysers.clear(); lobbyEntries.clear();
+        currentTalkerId = null;
+        document.querySelectorAll('audio[id^="audio-"]').forEach(function (a) { a.remove(); });
+        ledRx.classList.remove('active');
+        renderPeers(); renderScan();
+        await Promise.all([oldRoom ? oldRoom.leave() : null, oldLobby ? oldLobby.leave() : null]);
+        await new Promise(function (r) { setTimeout(r, 300); });
+        if (currentKey !== key) return; // 待っている間に退出・移動した
+        connectToChannel(key);
+        roomMeta = meta; roomEnterTime = enter; renderTagRow(); // タグと入室時刻は引き継ぐ
+        joinLobby();
+        announce();
+        renderScan();
+        flashSub('再接続しました。相手が見つかるまで少し待ってください');
+      } catch (e) {
+        flashSub('再接続に失敗しました。ページを再読み込みしてください');
+      } finally {
+        reconnecting = false;
+        btn.disabled = false;
+      }
+    }
+    document.getElementById('reconnectBtn').addEventListener('click', function () { reconnectRoom(false); });
+    // 回線が戻ったとき、または長くバックグラウンドにいたあとに戻ったときは、自動でつなぎ直す
+    window.addEventListener('online', function () { reconnectRoom(true); });
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) { hiddenAt = Date.now(); return; }
+      if (hiddenAt && Date.now() - hiddenAt > 20000) reconnectRoom(true);
+      hiddenAt = 0;
+    });
 
     document.getElementById('emptyBtn').addEventListener('click', function () {
       const key = toHex(crypto.getRandomValues(new Uint8Array(4)));
