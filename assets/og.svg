@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <radialGradient id="g" cx="25%" cy="45%" r="70%"><stop offset="0" stop-color="#232b3a"/><stop offset="1" stop-color="#14181d"/></radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="#1a1e24"/>
+  <rect x="24" y="24" width="1152" height="582" rx="28" fill="none" stroke="#374151" stroke-width="3"/>
+  <g transform="translate(30 95) scale(7)" fill="none" stroke="#60a5fa" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="18" y="19" width="24" height="39" rx="5"/>
+    <path d="M25 19V8"/>
+    <path d="M24 26h12M24 30h12"/>
+    <circle cx="30" cy="45" r="5.5"/>
+    <path d="M47 24q4 6 0 12"/>
+    <path d="M53 19q7 11 0 22"/>
+    <path d="M58 14q10 16 0 32" opacity=".55"/>
+  </g>
+  <text x="530" y="305" font-family="Hiragino Sans, Hiragino Kaku Gothic ProN, Noto Sans JP, sans-serif" font-size="92" font-weight="800" fill="#f3f4f6">ぽちっと通話</text>
+  <text x="534" y="372" font-family="Hiragino Sans, Hiragino Kaku Gothic ProN, Noto Sans JP, sans-serif" font-size="34" fill="#9ca3af">ボタンを押して話すトランシーバー</text>
+  <g fill="none" stroke="#fbbf24" stroke-width="3">
+    <rect x="534" y="410" width="104" height="48" rx="12"/>
+  </g>
+  <text x="586" y="444" text-anchor="middle" font-family="Hiragino Sans, Noto Sans JP, sans-serif" font-size="28" font-weight="800" fill="#fbbf24">α版</text>
+  <path d="M534 520h520" stroke="#374151" stroke-width="3" stroke-linecap="round" stroke-dasharray="2 14"/>
+</svg>
