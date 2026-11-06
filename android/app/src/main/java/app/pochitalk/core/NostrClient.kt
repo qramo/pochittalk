@@ -24,14 +24,17 @@ class NostrClient(
     @Volatile var isOpen: Boolean = false
         private set
     @Volatile private var closed = false
+    @Volatile private var generation = 0 // 作り直したあとに、古いソケットのコールバックを無視するための世代番号
     private var retryMs = DEFAULT_RETRY_MS
     private val subs = ConcurrentHashMap<String, String>() // subId -> REQ メッセージ
 
     fun connect() {
         if (closed) return
         val request = Request.Builder().url(url).build()
+        val gen = ++generation
         socket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (gen != generation) return
                 isOpen = true
                 retryMs = DEFAULT_RETRY_MS
                 log("relay open: $url")
@@ -39,7 +42,7 @@ class NostrClient(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                handleMessage(text)
+                if (gen == generation) handleMessage(text)
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -47,10 +50,11 @@ class NostrClient(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                handleClosed()
+                if (gen == generation) handleClosed()
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (gen != generation) return
                 log("relay failure: $url ${t.message}")
                 handleClosed()
             }
@@ -101,6 +105,24 @@ class NostrClient(
 
     fun publish(topic: String, content: String) {
         send(NostrProtocol.createEvent(topic, content))
+    }
+
+    /**
+     * いまの接続を捨てて、つなぎ直す (購読は保持して、開いたら再送する)。
+     * 回線が切り替わったあとなど、見かけ上は開いていても実際には死んでいる接続を張り直すために使う。
+     */
+    fun reconnect() {
+        if (closed) return
+        val old = socket
+        generation++ // 古いソケットのコールバックを無効にする
+        socket = null
+        isOpen = false
+        retryMs = DEFAULT_RETRY_MS
+        try {
+            old?.cancel()
+        } catch (_: Exception) {
+        }
+        connect()
     }
 
     fun close() {

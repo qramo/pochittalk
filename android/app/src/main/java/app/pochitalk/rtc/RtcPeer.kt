@@ -222,6 +222,7 @@ class RtcPeer(
             return
         }
         senders[track] = sender
+        log("[$id] audio track added")
         needsNegotiation()
     }
 

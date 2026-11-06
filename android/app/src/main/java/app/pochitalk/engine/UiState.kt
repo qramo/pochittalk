@@ -8,6 +8,9 @@ data class RoomInfo(
     val names: List<String>,
     val invited: Boolean,
     val isCurrent: Boolean,
+    /** 話題タグと、付けた人の名前 (なければ空)。 */
+    val tag: String = "",
+    val tagBy: String = "",
 )
 
 data class PeerInfo(val id: String, val name: String, val talking: Boolean)
@@ -48,6 +51,11 @@ data class UiState(
     val micTest: Boolean = false,
     /** 起動時に初回案内を表示するか。 */
     val welcomeOn: Boolean = true,
+    /** 入室中の部屋の話題タグ。 */
+    val roomTag: String = "",
+    val roomTagBy: String = "",
+    /** 再接続の途中 (ボタンを押せなくする)。 */
+    val reconnecting: Boolean = false,
     val micGranted: Boolean = false,
 )
 

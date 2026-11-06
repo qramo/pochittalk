@@ -12,7 +12,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -45,7 +44,7 @@ fun AboutDialog(onDismiss: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Brand()
-                OutlinedButton(onClick = onDismiss) { Text("閉じる") }
+                SubButton(onClick = onDismiss, small = true) { Text("閉じる") }
             }
             HorizontalDivider(color = PochiColors.Border)
             Column(

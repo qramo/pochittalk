@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
@@ -17,10 +19,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -86,26 +96,72 @@ fun Led(on: Boolean, color: Color) {
     )
 }
 
-/** 「いまある部屋」の一覧。ホーム画面と無線機画面の両方に出す。 */
+private class SearchFilter(val text: String, val hex: String?, val exact: String?)
+
+/** 検索語から絞り込みの条件を作る (部屋のURL / ハッシュ / ニックネーム / 話題)。Web版の parseSearch と同じ。 */
+private fun parseSearch(q: String): SearchFilter? {
+    val s = q.trim()
+    if (s.isEmpty()) return null
+    val m = Regex("[?&]r=([0-9a-fA-F]{8})(?![0-9a-fA-F])").find(s)
+    val hexq = s.lowercase().replace(Regex("[· -]"), "") // 区切り (· - 空白) を無視する
+    val isHex = Regex("^[0-9a-f]{2,8}$").matches(hexq)
+    val exact = m?.groupValues?.get(1)?.lowercase() ?: if (Regex("^[0-9a-f]{8}$").matches(hexq)) hexq else null
+    return SearchFilter(s.lowercase(), if (isHex) hexq else null, exact)
+}
+
+private fun matchSearch(room: RoomInfo, f: SearchFilter): Boolean {
+    if (f.exact != null) return room.key == f.exact
+    if (f.hex != null && room.key.contains(f.hex)) return true
+    if (room.tag.lowercase().contains(f.text)) return true
+    return room.names.any { it.lowercase().contains(f.text) }
+}
+
+/** 「いまある部屋」の一覧。ホーム画面と無線機画面の両方に出す。検索・話題タグ付き。 */
 @Composable
-fun RoomListCard(state: UiState, onJoin: (String) -> Unit) {
-    PochiCard {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("いまある部屋（タップで入る）", color = PochiColors.Muted, fontSize = 12.sp)
+fun RoomListCard(state: UiState, onJoin: (String) -> Unit, showReconnect: Boolean = false) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val filter = parseSearch(query)
+    var all = state.rooms
+    // URLやハッシュで指定された部屋に、いま誰もいない場合も、入れるように出す
+    if (filter?.exact != null && all.none { it.key == filter.exact }) {
+        all = (all + RoomInfo(filter.exact, 0, false, emptyList(), invited = false, isCurrent = false)).sortedBy { it.key }
+    }
+    val shown = if (filter == null) all else all.filter { matchSearch(it, filter) }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("いまある部屋（タップで入る）", color = PochiColors.Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
             Text(
-                "👥 ${state.totalPeople}人 / ${state.rooms.size}部屋",
+                if (filter != null) "🔍 ${shown.size} / ${all.size}部屋" else "👥 ${state.totalPeople}人 / ${all.size}部屋",
                 color = PochiColors.Muted,
                 fontSize = 12.sp,
             )
         }
-        if (state.rooms.isEmpty()) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            placeholder = { Text("🔍 URL・ハッシュ・名前・話題", fontSize = 13.sp, maxLines = 1) },
+            singleLine = true,
+            colors = pochiFieldColors(),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (showReconnect) {
+            SubButton(
+                onClick = { PochiEngine.reconnect(auto = false) },
+                enabled = !state.reconnecting,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (state.reconnecting) "再接続中…" else "↻ 一覧を再接続") }
+        }
+        if (all.isEmpty()) {
             Text(
                 if (state.ready) "いま誰もいません。「新しい部屋を作る」で始めましょう" else "接続中...",
                 color = PochiColors.Muted,
                 fontSize = 13.sp,
             )
+        } else if (shown.isEmpty()) {
+            Text("該当する部屋がありません", color = PochiColors.Muted, fontSize = 13.sp)
         }
-        state.rooms.forEach { room -> RoomRow(room, onJoin) }
+        shown.forEach { room -> RoomRow(room, onJoin) }
     }
 }
 
@@ -130,8 +186,19 @@ private fun RoomRow(room: RoomInfo, onJoin: (String) -> Unit) {
         val label = (if (room.air) "🔴 " else "🔵 ") + formatKey(room.key) + " · 👤${room.count}" +
             (if (room.invited) " · 招待" else "") + (if (room.isCurrent) " · 入室中" else "")
         Text(label, color = PochiColors.Text, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
-        val who = if (room.invited) "招待された部屋（現在は無人）" else room.names.joinToString("、")
-        if (who.isNotEmpty()) Text(who, color = PochiColors.Muted, fontSize = 12.sp)
+        if (room.tag.isNotEmpty()) {
+            Text(
+                "🏷 " + room.tag + (if (room.tagBy.isNotEmpty()) "（${room.tagBy}）" else ""),
+                color = Color(0xFF93C5FD), // Web版の .chip-tag と同じ色
+                fontSize = 12.sp,
+            )
+        }
+        val who = when {
+            room.invited -> "招待された部屋（現在は無人）"
+            room.count == 0 && room.names.isEmpty() -> "この部屋には、いま誰もいません（タップで入る）"
+            else -> room.names.joinToString("、")
+        }
+        Text(who, color = PochiColors.Muted, fontSize = 12.sp)
     }
 }
 
@@ -237,3 +304,44 @@ fun LevelMeter(meter: MeterState) {
     }
 }
 
+
+/** Web版の .btn-sub と同じ見た目のボタン (グレーの角丸、白い文字)。 */
+@Composable
+fun SubButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    container: Color = Color(0xFF374151),
+    small: Boolean = false,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        shape = RoundedCornerShape(8.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = container,
+            contentColor = Color.White,
+            disabledContainerColor = container.copy(alpha = 0.5f),
+            disabledContentColor = Color.White.copy(alpha = 0.6f),
+        ),
+        contentPadding = if (small) PaddingValues(horizontal = 10.dp, vertical = 4.dp) else PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        content = content,
+    )
+}
+
+/** Web版の input と同じ色 (濃い背景、グレーの枠、フォーカスで青)。 */
+@Composable
+fun pochiFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedContainerColor = Color(0xFF111827),
+    unfocusedContainerColor = Color(0xFF111827),
+    focusedBorderColor = PochiColors.Accent,
+    unfocusedBorderColor = Color(0xFF374151),
+    focusedTextColor = Color.White,
+    unfocusedTextColor = Color.White,
+    focusedLabelColor = PochiColors.Muted,
+    unfocusedLabelColor = PochiColors.Muted,
+    focusedPlaceholderColor = PochiColors.Muted,
+    unfocusedPlaceholderColor = PochiColors.Muted,
+)

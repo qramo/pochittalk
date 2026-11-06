@@ -65,6 +65,16 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        PochiEngine.onAppForeground()
+    }
+
+    override fun onStop() {
+        PochiEngine.onAppBackground()
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
         PochiEngine.refreshMicPermission()

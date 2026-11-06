@@ -6,6 +6,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.Network
 import androidx.core.content.ContextCompat
 import app.pochitalk.audio.MicGain
 import app.pochitalk.audio.MicMonitor
@@ -51,6 +53,8 @@ object PochiEngine {
     private const val ACTION_PTT_STATE = "pttState"
     private const val ACTION_PTT_NAME = "pttName"
     private const val ACTION_PRESENCE = "presence"
+    private const val ACTION_ROOM_TAG = "roomTag" // Web版と共通: {tag, by, at}。話題タグ。新しい(at が大きい)ほうが勝つ
+    private const val TAG_MAX = 30
     private const val ACTION_JOIN_AGE = "joinAge" // Web版と共通: 入室してからの経過時間を交換し、新しく来た側を判定する
 
     /** 招待URL。Web版の公開URLに合わせて変更する。 */
@@ -99,7 +103,15 @@ object PochiEngine {
 
     private var lobby: TrysteroRoom? = null
     private var presenceAction: TrysteroRoom.Action? = null
-    private class LobbyEntry(val key: String, val talking: Boolean, val name: String, val ts: Long)
+    private class LobbyEntry(
+        val key: String,
+        val talking: Boolean,
+        val name: String,
+        val ts: Long,
+        val tag: String = "",
+        val tagBy: String = "",
+        val tagAt: Long = 0L,
+    )
     private val lobbyEntries = HashMap<String, LobbyEntry>()
 
     private var room: TrysteroRoom? = null
@@ -111,6 +123,11 @@ object PochiEngine {
     private var myNickname = ""
     private var currentKey: String? = null
     private var pendingKey: String? = null
+    private class Meta(val tag: String, val by: String, val at: Long)
+    private var roomMeta = Meta("", "", 0L)
+    private var roomTagAction: TrysteroRoom.Action? = null
+    private var reconnecting = false
+    @Volatile private var hiddenAt = 0L
     private var micTest = false
     private var roomEnterTime = 0L
     private var currentTalkerId: String? = null
@@ -166,6 +183,7 @@ object PochiEngine {
         micGain.gain = Math.pow(10.0, savedGain / 20.0).toFloat()
         _state.update { it.copy(micGainDb = savedGain, welcomeOn = prefs.getString(PREF_WELCOME, null) != "off") }
         refreshMicPermission()
+        registerNetworkWatcher()
         Runtime.scope.launch { startNetwork() }
     }
 
@@ -249,6 +267,9 @@ object PochiEngine {
                         talking = d.optBoolean("talking", false),
                         name = d.optString("name", "?").take(12),
                         ts = System.currentTimeMillis(),
+                        tag = capTag(d.optString("tag", "")),
+                        tagBy = d.optString("by", "").take(12),
+                        tagAt = d.optLong("at", 0L),
                     )
                     renderScan()
                 }
@@ -265,10 +286,18 @@ object PochiEngine {
     private fun announce(to: String?) {
         val key = currentKey ?: return
         val msg = JSONObject().put("ch", key).put("talking", isTransmitting).put("name", myNickname)
+            .put("tag", roomMeta.tag).put("by", roomMeta.by).put("at", roomMeta.at)
         presenceAction?.sendJson(msg, to)
     }
 
-    private class Stat(var count: Int = 0, var air: Boolean = false, val names: MutableList<String> = ArrayList())
+    private class Stat(
+        var count: Int = 0,
+        var air: Boolean = false,
+        val names: MutableList<String> = ArrayList(),
+        var tag: String = "",
+        var tagBy: String = "",
+        var tagAt: Long = 0L,
+    )
 
     private fun renderScan() {
         val stats = HashMap<String, Stat>()
@@ -277,6 +306,11 @@ object PochiEngine {
             s.count++
             s.names.add(e.name)
             if (e.talking) s.air = true
+            if (e.tagAt > s.tagAt) { // 部屋のタグは、いちばん新しいものを採用する
+                s.tagAt = e.tagAt
+                s.tag = e.tag
+                s.tagBy = e.tagBy
+            }
         }
         val cur = currentKey
         if (cur != null) {
@@ -284,6 +318,11 @@ object PochiEngine {
             s.count++
             s.names.add(0, myNickname + "(自分)")
             if (isTransmitting) s.air = true
+            if (roomMeta.at > s.tagAt) {
+                s.tagAt = roomMeta.at
+                s.tag = roomMeta.tag
+                s.tagBy = roomMeta.by
+            }
         }
         val pend = pendingKey
         if (pend != null && !stats.containsKey(pend)) stats[pend] = Stat()
@@ -298,6 +337,8 @@ object PochiEngine {
                 names = s.names.toList(),
                 invited = k == pend && s.count == 0,
                 isCurrent = k == cur,
+                tag = s.tag,
+                tagBy = s.tagBy,
             )
         }
         _state.update { it.copy(rooms = rooms, totalPeople = total, pendingKey = pend) }
@@ -329,14 +370,33 @@ object PochiEngine {
         _state.update { it.copy(micTest = false) }
         stopVoxInternal() // Web版と同じく、入室するとVOXはオフに戻る
         roomEnterTime = System.currentTimeMillis()
+        roomMeta = Meta("", "", 0L)
+        _state.update { it.copy(roomTag = "", roomTagBy = "") }
 
+        connectRoom(n, key)
+
+        enterAudioSession()
+        ensureMic()
+        startForegroundService()
+        updateMicMonitor()
+        resetStatus()
+        _state.update { it.copy(currentKey = key, pendingKey = null) }
+        renderPeers()
+        announce(null)
+        renderScan()
+    }
+
+    /** 通話部屋に接続して、アクションを配線する。入室と再接続で共用する (入室時刻とタグは呼び出し側が管理)。 */
+    private fun connectRoom(n: TrysteroNetwork, key: String) {
         val r = n.joinRoom(APP_ID, "h-$key")
         room = r
         val stateAction = r.action(ACTION_PTT_STATE)
         val nameAction = r.action(ACTION_PTT_NAME)
         val joinAgeAction = r.action(ACTION_JOIN_AGE)
+        val tagAction = r.action(ACTION_ROOM_TAG)
         pttStateAction = stateAction
         pttNameAction = nameAction
+        roomTagAction = tagAction
 
         nameAction.onMessage = { msg, peerId ->
             peers[peerId]?.let {
@@ -362,10 +422,22 @@ object PochiEngine {
                 }
             }
         }
+        // 話題タグ: 新しい(at が大きい)ほうを採用する
+        tagAction.onMessage = { msg, _ ->
+            if (msg.isJson) {
+                val d = msg.json()
+                val at = d.optLong("at", 0L)
+                if (at > roomMeta.at) {
+                    roomMeta = Meta(capTag(d.optString("tag", "")), d.optString("by", "").take(12), at)
+                    publishMeta()
+                }
+            }
+        }
         r.onPeerJoin = { peerId ->
             peers[peerId] = PeerState("接続中...", false)
             renderPeers()
             nameAction.sendString(myNickname, peerId)
+            if (roomMeta.at > 0) tagAction.sendJson(metaJson(), peerId) // 後から来た人にも、いまのタグを伝える
             val ageAtJoin = System.currentTimeMillis() - roomEnterTime
             joinAgeAction.sendJson(JSONObject().put("age", ageAtJoin), peerId)
             // 相手が経過時間を送ってこない場合 (別の実装など): 自分が20秒以上いるなら、相手は新規とみなす
@@ -383,16 +455,8 @@ object PochiEngine {
             if (currentTalkerId == peerId) onStopReceiving()
             renderPeers()
         }
-
-        enterAudioSession()
+        // 入室でも再接続でも、新しい部屋にマイクの音声トラックを付ける (これが無いと、話しても相手に音声が届かない)
         ensureMic()
-        startForegroundService()
-        updateMicMonitor()
-        resetStatus()
-        _state.update { it.copy(currentKey = key, pendingKey = null) }
-        renderPeers()
-        announce(null)
-        renderScan()
     }
 
     fun leave() {
@@ -409,6 +473,8 @@ object PochiEngine {
         room = null
         pttStateAction = null
         pttNameAction = null
+        roomTagAction = null
+        roomMeta = Meta("", "", 0L)
         peers.clear()
         currentTalkerId = null
         currentKey = null
@@ -420,7 +486,7 @@ object PochiEngine {
             CallService.stop(app)
         }
         resetStatus()
-        _state.update { it.copy(currentKey = null, peers = emptyList()) }
+        _state.update { it.copy(currentKey = null, peers = emptyList(), roomTag = "", roomTagBy = "") }
         renderScan()
     }
 
@@ -433,6 +499,140 @@ object PochiEngine {
     }
 
     fun inviteUrl(): String? = currentKey?.let { INVITE_BASE_URL + "?r=" + it }
+
+    // ================================================================ 話題タグ
+
+    /** 制御文字を除いて30文字までにする (Web版の capTag と同じ)。 */
+    private fun capTag(t: String?): String {
+        val sb = StringBuilder()
+        var n = 0
+        for (cp in (t ?: "").codePoints().toArray()) {
+            if (cp >= 32 && cp != 127) {
+                sb.appendCodePoint(cp)
+                if (++n >= TAG_MAX) break
+            }
+        }
+        return sb.toString().trim()
+    }
+
+    private fun metaJson(): JSONObject =
+        JSONObject().put("tag", roomMeta.tag).put("by", roomMeta.by).put("at", roomMeta.at)
+
+    private fun publishMeta() {
+        _state.update { it.copy(roomTag = roomMeta.tag, roomTagBy = roomMeta.by) }
+        announce(null)
+        renderScan()
+    }
+
+    /** 部屋の話題タグをつける/変える (誰でも変えられ、付けた人の名前が添えられる)。空にすると消える。 */
+    fun setTag(text: String) {
+        Runtime.scope.launch {
+            if (currentKey == null) return@launch
+            val t = capTag(text)
+            roomMeta = Meta(t, if (t.isNotEmpty()) myNickname else "", System.currentTimeMillis())
+            roomTagAction?.sendJson(metaJson())
+            publishMeta()
+        }
+    }
+
+    // ================================================================ 再接続
+
+    /**
+     * 通話とロビーの接続を張り直す。部屋には入ったまま (入室時刻・タグ・マイクはそのまま)。
+     * 相手が見つからない、声が届かなくなったとき、回線が切り替わったときに使う。ホーム画面ではロビーだけ張り直す。
+     */
+    fun reconnect(auto: Boolean = false) {
+        Runtime.scope.launch { reconnectInternal(auto) }
+    }
+
+    private suspend fun reconnectInternal(auto: Boolean) {
+        if (reconnecting) return
+        val n = net ?: return
+        reconnecting = true
+        _state.update { it.copy(reconnecting = true) }
+        try {
+            val key = currentKey
+            flash(if (auto) "接続が切れた可能性があるので、つなぎ直しています…" else "再接続中…")
+            if (key != null) {
+                if (isTransmitting) {
+                    pressed = false
+                    stopTransmission()
+                }
+                // 古い接続を片付ける (マイクと、部屋に入っている状態はそのまま)
+                room?.leave()
+                room = null
+                pttStateAction = null
+                pttNameAction = null
+                roomTagAction = null
+                peers.clear()
+                currentTalkerId = null
+                _state.update { it.copy(ledRx = false) }
+                renderPeers()
+            }
+            lobby?.leave()
+            lobby = null
+            presenceAction = null
+            lobbyEntries.clear()
+            renderScan()
+            n.reconnectRelays()
+            delay(400) // 古い部屋の後始末 (leave) が終わるのを待つ
+            joinLobby(n)
+            if (key != null && currentKey == key) { // 待っている間に退出・移動していなければ、部屋につなぎ直す
+                connectRoom(n, key)
+                renderPeers()
+                announce(null)
+            }
+            renderScan()
+            flash("再接続しました。相手が見つかるまで少し待ってください")
+        } catch (e: Exception) {
+            Runtime.log("reconnect failed: ${e.message}")
+            flash("再接続に失敗しました。アプリを開き直してください")
+        } finally {
+            reconnecting = false
+            _state.update { it.copy(reconnecting = false) }
+        }
+    }
+
+    /** 回線が戻った/切り替わったときに、自動でつなぎ直す (Web版の online イベントに相当)。 */
+    private fun registerNetworkWatcher() {
+        val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        var lastNet: Network? = null
+        var hadLoss = false
+        try {
+            cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    val changed = (lastNet != null && lastNet != network) || hadLoss
+                    lastNet = network
+                    hadLoss = false
+                    if (changed) reconnect(auto = true)
+                }
+
+                override fun onLost(network: Network) {
+                    if (network == lastNet) {
+                        lastNet = null
+                        hadLoss = true
+                    }
+                }
+            })
+        } catch (e: Exception) {
+            Runtime.log("network watcher unavailable: ${e.message}")
+        }
+    }
+
+    /** アプリが裏に回った/戻った。長く離れて戻ったときだけ、自動でつなぎ直す。 */
+    fun onAppBackground() {
+        hiddenAt = System.currentTimeMillis()
+    }
+
+    fun onAppForeground() {
+        val since = hiddenAt
+        hiddenAt = 0
+        if (since == 0L || System.currentTimeMillis() - since < 20_000) return
+        Runtime.scope.launch {
+            // 通話中 (相手とつながっている) は、サービスで接続が生きているので、つなぎ直さない
+            if (peers.isEmpty()) reconnectInternal(auto = true)
+        }
+    }
 
     // ================================================================ ニックネーム
 
@@ -537,12 +737,14 @@ object PochiEngine {
     private fun updateMicMonitor() {
         // libwebrtc が録音中 (送信中、または接続直後の短い間) は、待機用の録音を止めておく。
         // 録音の停止通知が来ない場合に備えて、4秒たったら止まったものとみなす。
-        val rtcBusy = rtcRecording && (isTransmitting || System.currentTimeMillis() - rtcRecordingSince < 4_000)
+        val now = System.currentTimeMillis()
+        val rtcBusy = rtcRecording && (isTransmitting || now - rtcRecordingSince < 4_000 || now - txEndedAt < 3_000)
         val want = (room != null || micTest) && micGranted() && !isTransmitting && !rtcBusy
         if (want) micMonitor.start() else micMonitor.stop()
     }
 
     private var rtcRecording = false
+    private var txEndedAt = 0L
     private var rtcRecordingSince = 0L
 
     /** libwebrtc の録音が始まった/止まった。止まったら待機用の録音を再開する。 */
@@ -604,6 +806,7 @@ object PochiEngine {
     private fun stopTransmissionSilently() {
         if (!isTransmitting) return
         isTransmitting = false
+        txEndedAt = System.currentTimeMillis()
         audioTrack?.setEnabled(false)
         updateMicMonitor()
         _state.update { it.copy(ledTx = false) }
@@ -615,6 +818,7 @@ object PochiEngine {
     private fun stopTransmission() {
         if (!isTransmitting) return
         isTransmitting = false
+        txEndedAt = System.currentTimeMillis()
         audioTrack?.setEnabled(false)
         updateMicMonitor()
         val talker = currentTalkerId?.let { peers[it] }

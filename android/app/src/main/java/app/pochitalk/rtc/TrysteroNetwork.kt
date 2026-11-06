@@ -57,6 +57,11 @@ class TrysteroNetwork(
         relays.forEach { it.connect() }
     }
 
+    /** 全リレーとのWebSocketを張り直す (購読は保持)。 */
+    fun reconnectRelays() {
+        relays.forEach { it.reconnect() }
+    }
+
     fun joinRoom(appId: String, roomId: String): TrysteroRoom {
         val key = "$appId/$roomId"
         rooms[key]?.let { return it }

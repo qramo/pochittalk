@@ -11,9 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -69,7 +67,7 @@ fun SettingsDialog(state: UiState, actions: Actions, onShowAbout: () -> Unit, on
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("設定", color = PochiColors.Text, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                OutlinedButton(onClick = onDismiss) { Text("閉じる") }
+                SubButton(onClick = onDismiss, small = true) { Text("閉じる") }
             }
             HorizontalDivider(color = PochiColors.Border)
             Column(
@@ -86,7 +84,7 @@ fun SettingsDialog(state: UiState, actions: Actions, onShowAbout: () -> Unit, on
                 )
                 InputLevelSetting(state)
                 LevelMeter(if (state.micTest) meter else meter.copy(label = "MIC", level = 0f, peak = 0f, dbText = "-∞ dB"))
-                Button(
+                SubButton(
                     onClick = { actions.micTest(!state.micTest) },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(if (state.micTest) "マイクテスト停止" else "マイクテスト開始") }
@@ -115,7 +113,7 @@ fun SettingsDialog(state: UiState, actions: Actions, onShowAbout: () -> Unit, on
                 )
 
                 SectionTitle("このアプリについて")
-                OutlinedButton(onClick = onShowAbout, modifier = Modifier.fillMaxWidth()) { Text("使い方・プライバシーを見る") }
+                SubButton(onClick = onShowAbout, modifier = Modifier.fillMaxWidth(), container = Color(0xFF1E293B)) { Text("使い方・プライバシーを見る") }
             }
         }
     }
@@ -156,12 +154,12 @@ fun WelcomeDialog(state: UiState, onSettings: () -> Unit, onAbout: () -> Unit, o
             Text("はじめにご確認ください。", color = PochiColors.Text, fontSize = 13.sp)
             SectionTitle("1. マイクを設定する")
             Text("声が相手に十分な大きさで届くよう、入力レベルを調整できます。", color = PochiColors.Text, fontSize = 13.sp, lineHeight = 20.sp)
-            OutlinedButton(onClick = onSettings, modifier = Modifier.fillMaxWidth()) { Text("マイクを設定する") }
+            SubButton(onClick = onSettings, modifier = Modifier.fillMaxWidth(), container = Color(0xFF1E293B)) { Text("マイクを設定する") }
             SectionTitle("2. このアプリについて読む")
             Text("使い方と、プライバシー（見える情報、保存されるもの）を説明しています。", color = PochiColors.Text, fontSize = 13.sp, lineHeight = 20.sp)
-            OutlinedButton(onClick = onAbout, modifier = Modifier.fillMaxWidth()) { Text("このアプリについて") }
+            SubButton(onClick = onAbout, modifier = Modifier.fillMaxWidth(), container = Color(0xFF1E293B)) { Text("このアプリについて") }
             SwitchRow("次回も表示する", state.welcomeOn) { PochiEngine.setWelcomeOn(it) }
-            Button(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("はじめる") }
+            SubButton(onClick = onClose, modifier = Modifier.fillMaxWidth(), container = Color(0xFF2563EB)) { Text("はじめる") }
         }
     }
 }
