@@ -214,6 +214,10 @@ const HTML = `<!DOCTYPE html>
     .vox-thr { position: absolute; top: 0; bottom: 0; width: 2px; background: #fbbf24; }
     .vox-sens { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--muted-color); }
     .vox-sens input { flex: 1; }
+    .vox-hint { font-size: 0.7rem; opacity: .8; white-space: nowrap; }
+    .level-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-family: monospace; font-size: 0.65rem; color: var(--muted-color); }
+    .level { flex: 1; height: 14px; min-width: 0; }
+    .level-db { width: 52px; text-align: right; }
     .hidden { display: none !important; }
     .home { width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 16px; }
     .lcd { text-align: center; padding: 4px 0 2px; }
@@ -303,6 +307,7 @@ const HTML = `<!DOCTYPE html>
         <div class="lcd-ch" id="chDisplay">ROOM HASH</div>
         <div class="lcd-freq" id="freqDisplay">----·----</div>
         <div class="lcd-sub" id="lcdSub"></div>
+        <div class="level-row"><span class="level-label" id="levelLabel">LEVEL</span><canvas class="level" id="levelCanvas" width="280" height="14"></canvas><span class="level-db" id="levelDb">-∞ dB</span></div>
       </div>
       <div class="status-row">
         <div class="indicators">
@@ -332,7 +337,7 @@ const HTML = `<!DOCTYPE html>
       </label>
       <div class="vox-panel hidden" id="voxPanel">
         <div class="vox-meter"><div class="vox-fill" id="voxFill"></div><div class="vox-thr" id="voxThr"></div></div>
-        <label class="vox-sens">感度 <input type="range" id="voxSens" min="1" max="10" step="1" value="5"></label>
+        <label class="vox-sens"><span>しきい値</span><input type="range" id="voxSens" min="1" max="10" step="1" value="6"><span class="vox-hint">右ほど大きな声が必要</span></label>
       </div>
       <label class="sound-toggle">
         <input type="checkbox" id="soundEffectCheck" checked>
@@ -380,7 +385,7 @@ const HTML = `<!DOCTYPE html>
       <ul>
         <li>音声は、サーバーを通らず、端末どうしで直接送られます。通信はWebRTCの標準の暗号化がかかります。</li>
         <li>このアプリの運営側は、音声を受け取らず、録音も保存もしません（そもそも運営側のサーバーに届きません）。</li>
-        <li>VOX（声で自動送信）をオンにすると、声を検出するために端末の中でマイクの音量を監視します。この監視用の音は送信も保存もされず、声を検出したときだけ送信が始まります。VOX自体は、ページを開き直すとオフに戻ります（感度の設定だけ、端末に保存されます）。</li>
+        <li>VOX（声で自動送信）をオンにすると、声を検出するために端末の中でマイクの音量を監視します。この監視用の音は送信も保存もされず、声を検出したときだけ送信が始まります。同じ理由で、マイクが使える状態の間は、画面のレベル表示のためにも端末の中で音量を測っています。VOX自体は、ページを開き直すとオフに戻ります（しきい値の設定だけ、端末に保存されます）。</li>
         <li>マイクは、最初に話すボタンを押したときに許可を求めます。許可後はページを開いている間マイクを確保しますが、ボタンを押していない間は音声を送りません（ブラウザのマイク表示が出たままになることがあります）。</li>
       </ul>
 
@@ -388,7 +393,7 @@ const HTML = `<!DOCTYPE html>
       <ul>
         <li><b>ハンドルネーム</b>: ブラウザの localStorage（キー名 pochitalk_ptt_name）に保存されます。次回開いたときに入力済みになります。この端末のブラウザの中だけにあり、運営側には送られません。ブラウザのサイトデータを消すと削除されます。</li>
         <li><b>URLの「?r=…」</b>: 今いる部屋のハッシュ値がアドレスに入ります。ブラウザの履歴に残ることがあります。</li>
-        <li><b>VOXの感度</b>: 1〜10の数字を、同じく localStorage（キー名 pochitalk_vox_sens）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
+        <li><b>VOXのしきい値</b>: 1〜10の数字を、同じく localStorage（キー名 pochitalk_vox_thr）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
         <li>Cookie、ログイン情報、メールアドレス、位置情報、連絡先などは、保存も取得もしません。</li>
         <li>アクセス解析や広告の仕組みは入れていません。</li>
       </ul>
@@ -434,6 +439,8 @@ const HTML = `<!DOCTYPE html>
     const nameInput = document.getElementById('nameInput');
     const soundEffectCheck = document.getElementById('soundEffectCheck');
 
+    const rxAnalysers = new Map(); // peerId -> AnalyserNode
+    let txAnalyser = null, txMonitor = null;
     let audioCtx = null, userMediaStream = null, localAudioTrack = null;
     let room = null, sendPttState = null, sendNickname = null;
     let isTransmitting = false, currentTalkerId = null;
@@ -584,6 +591,19 @@ const HTML = `<!DOCTYPE html>
       } catch (_) {}
     }
 
+    // 送信トラックは無効化されるため、表示用に複製したトラックで音量を測る
+    function setupTxAnalyser() {
+      try {
+        txMonitor = userMediaStream.clone();
+        txMonitor.getAudioTracks().forEach(function (t) { t.enabled = true; }); // 複製は送信トラックの無効状態を引き継ぐため
+        const ctx = getAudioContext();
+        txAnalyser = ctx.createAnalyser();
+        txAnalyser.fftSize = 256;
+        txAnalyser.smoothingTimeConstant = 0.6;
+        ctx.createMediaStreamSource(txMonitor).connect(txAnalyser);
+      } catch (_) { txAnalyser = null; }
+    }
+
     // マイクは初回のみ取得し、トラックを無効化した状態で全員に一度だけ共有する
     async function initMicrophone() {
       if (userMediaStream && localAudioTrack) return true;
@@ -594,6 +614,7 @@ const HTML = `<!DOCTYPE html>
         });
         localAudioTrack = userMediaStream.getAudioTracks()[0];
         localAudioTrack.enabled = false;
+        setupTxAnalyser();
         if (room) room.addStream(userMediaStream);
         return true;
       } catch (err) {
@@ -607,6 +628,7 @@ const HTML = `<!DOCTYPE html>
       if (room) {
         room.leave();
         peerMap.clear();
+        rxAnalysers.clear();
         currentTalkerId = null;
         document.querySelectorAll('audio[id^="audio-"]').forEach(function (a) { a.remove(); });
         ledRx.classList.remove('active');
@@ -664,6 +686,7 @@ const HTML = `<!DOCTYPE html>
 
       room.onPeerLeave(function (peerId) {
         peerMap.delete(peerId);
+        rxAnalysers.delete(peerId);
         if (currentTalkerId === peerId) onStopReceiving();
         const el = document.getElementById('audio-' + peerId);
         if (el) el.remove();
@@ -680,6 +703,14 @@ const HTML = `<!DOCTYPE html>
           document.body.appendChild(el);
         }
         el.srcObject = stream;
+        try {
+          const ctx = getAudioContext();
+          const an = ctx.createAnalyser();
+          an.fftSize = 256;
+          an.smoothingTimeConstant = 0.6;
+          ctx.createMediaStreamSource(stream).connect(an);
+          rxAnalysers.set(peerId, an);
+        } catch (_) {}
         el.play().catch(function () {});
       });
 
@@ -942,7 +973,7 @@ const HTML = `<!DOCTYPE html>
     let voxStream = null, voxAnalyser = null, voxTimer = null, voxBuf = null;
     let voxHits = 0, voxLastVoice = 0, voxCooldownUntil = 0, voxInitiated = false;
 
-    function voxThreshold() { return 0.09 - parseInt(voxSens.value, 10) * 0.007; }
+    function voxThreshold() { return 0.02 + (parseInt(voxSens.value, 10) - 1) * 0.007; }
     function updateVoxThrMarker() { voxThrEl.style.left = Math.min(100, voxThreshold() / 0.2 * 100) + '%'; }
 
     function voxTick() {
@@ -1008,13 +1039,66 @@ const HTML = `<!DOCTYPE html>
 
     voxCheck.addEventListener('change', function () { if (voxCheck.checked) startVox(); else stopVox(); });
     try {
-      const savedSens = parseInt(localStorage.getItem('pochitalk_vox_sens'), 10);
+      const savedSens = parseInt(localStorage.getItem('pochitalk_vox_thr'), 10);
       if (savedSens >= 1 && savedSens <= 10) voxSens.value = savedSens;
     } catch (_) {}
     voxSens.addEventListener('input', function () {
       updateVoxThrMarker();
-      try { localStorage.setItem('pochitalk_vox_sens', voxSens.value); } catch (_) {}
+      try { localStorage.setItem('pochitalk_vox_thr', voxSens.value); } catch (_) {}
     });
+
+    // ---------- 音声レベル ----------
+    (function () {
+      const lv = document.getElementById('levelCanvas').getContext('2d');
+      const lvW = document.getElementById('levelCanvas').width, lvH = document.getElementById('levelCanvas').height;
+      const levelLabel = document.getElementById('levelLabel');
+      const levelDb = document.getElementById('levelDb');
+      const SEGS = 24;
+      let level = 0, peak = 0, peakHoldUntil = 0, td = null;
+
+      function pickSource() {
+        if (isTransmitting && txAnalyser) return { an: txAnalyser, color: '#ef4444' };
+        if (currentTalkerId && rxAnalysers.get(currentTalkerId)) return { an: rxAnalysers.get(currentTalkerId), color: '#10b981' };
+        if (txAnalyser) return { an: txAnalyser, color: '#3b82f6', idle: true };
+        return null;
+      }
+
+      function draw() {
+        requestAnimationFrame(draw);
+        if (document.getElementById('radioView').classList.contains('hidden')) return;
+        const src = pickSource();
+        // ---- レベルメーター（音量 dB、ピークホールド付き）----
+        let target = 0, db = -Infinity;
+        if (src) {
+          if (!td || td.length !== src.an.fftSize) td = new Uint8Array(src.an.fftSize);
+          src.an.getByteTimeDomainData(td);
+          let sum = 0;
+          for (let i = 0; i < td.length; i++) { const v = (td[i] - 128) / 128; sum += v * v; }
+          const rms = Math.sqrt(sum / td.length);
+          db = rms > 0 ? 20 * Math.log10(rms) : -Infinity;
+          target = Math.min(1, Math.max(0, (db + 60) / 60));
+        }
+        level += (target - level) * (target > level ? 0.5 : 0.12);
+        const nowMs = performance.now();
+        if (level >= peak) { peak = level; peakHoldUntil = nowMs + 800; }
+        else if (nowMs > peakHoldUntil) peak = Math.max(level, peak - 0.02);
+        lv.clearRect(0, 0, lvW, lvH);
+        const sg = 3, sw = (lvW - sg * (SEGS - 1)) / SEGS;
+        for (let i = 0; i < SEGS; i++) {
+          const pos = (i + 1) / SEGS;
+          const on = pos <= level + 0.001;
+          const isPeak = Math.abs(pos - peak) < 0.5 / SEGS + 0.001 && peak > 0.02;
+          const col = pos > 0.85 ? '#ef4444' : pos > 0.65 ? '#fbbf24' : '#10b981';
+          lv.globalAlpha = (on || isPeak) ? 1 : 0.16;
+          lv.fillStyle = col;
+          lv.fillRect(i * (sw + sg), 0, sw, lvH);
+        }
+        lv.globalAlpha = 1;
+        levelDb.textContent = isFinite(db) ? Math.round(db) + ' dB' : '-∞ dB';
+        levelLabel.textContent = !src ? 'LEVEL' : (src.idle ? 'MIC' : (isTransmitting ? 'TX' : 'RX'));
+      }
+      requestAnimationFrame(draw);
+    })();
 
     document.getElementById('leaveBtn').addEventListener('click', function () { leaveRoom(); });
     document.getElementById('leaveBtn2').addEventListener('click', function () { leaveRoom(); });
