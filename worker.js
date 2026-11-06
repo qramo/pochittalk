@@ -202,6 +202,7 @@ const HTML = `<!DOCTYPE html>
     .about * { user-select: text; -webkit-user-select: text; }
     .about-head { flex: none; display: flex; justify-content: space-between; align-items: center; padding: 12px 18px; border-bottom: 1px solid #374151; background: var(--card-bg); }
     .about-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 18px 20px; }
+    .about a { color: #93c5fd; text-decoration: underline; }
     .about h3 { margin: 16px 0 6px; color: #93c5fd; font-size: 1rem; border-bottom: 1px solid #374151; padding-bottom: 4px; }
     .about h4 { margin: 12px 0 4px; color: #fbbf24; font-size: 0.88rem; }
     .about ul { padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px; }
@@ -213,10 +214,11 @@ const HTML = `<!DOCTYPE html>
     .vox-fill.over { background: var(--tx-color); }
     .vox-thr { position: absolute; top: 0; bottom: 0; width: 2px; background: #fbbf24; }
     .vox-sens { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--muted-color); }
-    .vox-sens input { flex: 1; }
+    .vox-sens input { flex: 1; min-width: 0; height: 32px; margin: 0; touch-action: pan-y; }
     .vox-hint { font-size: 0.7rem; opacity: .8; white-space: nowrap; }
     .level-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-family: monospace; font-size: 0.65rem; color: var(--muted-color); }
     .level { flex: 1; height: 14px; min-width: 0; }
+    .gain-val { min-width: 62px; text-align: right; font-family: monospace; }
     .level-db { width: 52px; text-align: right; }
     .hidden { display: none !important; }
     .home { width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 16px; }
@@ -286,7 +288,7 @@ const HTML = `<!DOCTYPE html>
       <div class="brand"><span>🔘</span><span>ぽちっと通話</span><span class="alpha-badge">α版</span></div>
       <input type="text" id="nameInput" placeholder="ハンドルネーム" maxlength="12" autocomplete="off">
       <button class="btn-sub" id="emptyBtn" type="button">新しい部屋を作る</button>
-      <button class="btn-sub" id="aboutBtn" type="button" style="background:#1e293b">このアプリについて（使い方・プライバシー）</button>
+      <button class="btn-sub" id="settingsBtn" type="button" style="background:#1e293b">⚙ 設定（マイク・このアプリについて）</button>
     </section>
   </div>
 
@@ -337,7 +339,7 @@ const HTML = `<!DOCTYPE html>
       </label>
       <div class="vox-panel hidden" id="voxPanel">
         <div class="vox-meter"><div class="vox-fill" id="voxFill"></div><div class="vox-thr" id="voxThr"></div></div>
-        <label class="vox-sens"><span>しきい値</span><input type="range" id="voxSens" min="1" max="10" step="1" value="6"><span class="vox-hint">右ほど大きな声が必要</span></label>
+        <label class="vox-sens"><span>しきい値</span><input type="range" id="voxSens" min="1" max="10" step="1" value="6"></label>
       </div>
       <label class="sound-toggle">
         <input type="checkbox" id="soundEffectCheck" checked>
@@ -351,6 +353,51 @@ const HTML = `<!DOCTYPE html>
       <div class="scan-list" id="scanList"><span class="peers-empty">スキャン中...</span></div>
   </section>
 
+
+  <dialog id="settingsDialog">
+    <div class="about">
+      <div class="about-head">
+        <strong>設定</strong>
+        <button class="btn-sub" id="settingsClose" type="button" style="padding:4px 12px">閉じる</button>
+      </div>
+      <div class="about-body">
+        <h3>マイク</h3>
+        <p>「マイクテスト開始」を押して声を出し、メーターが振れることを確認してください。小さく聞こえる場合は、入力レベルを上げます（上げすぎると音が割れます）。</p>
+        <label class="vox-sens" style="margin:10px 0"><span>入力レベル</span><input type="range" id="homeGain" min="0" max="30" step="1" value="0"><span class="gain-val" id="homeGainVal">そのまま</span></label>
+        <div class="level-row"><span class="level-label">MIC</span><canvas class="level" id="homeLevelCanvas" width="280" height="14"></canvas><span class="level-db" id="homeLevelDb">-∞ dB</span></div>
+        <button class="btn-sub" id="micTestBtn" type="button" style="width:100%;margin-top:10px">マイクテスト開始</button>
+        <h3>初回案内</h3>
+        <label class="sound-toggle"><input type="checkbox" id="welcomeAgain2"> 開いたときに初回案内を表示する</label>
+        <h3>ソース・ライセンス</h3>
+        <p>このアプリは、qramo さんの「ぽっと通話」をもとに、ボタンを押している間だけ話せるようにしたものです。</p>
+        <p><a href="https://potalk.app/" target="_blank" rel="noopener noreferrer">potalk.app</a><br><a href="https://github.com/qramo/po_call" target="_blank" rel="noopener noreferrer">github.com/qramo/po_call</a></p>
+        <p>このアプリのソースコードは GitHub で公開しています。<br><a href="https://github.com/riryo3/pochittalk" target="_blank" rel="noopener noreferrer">github.com/riryo3/pochittalk</a></p>
+        <p>MIT License<br>Copyright (c) 2026 qramo<br>Copyright (c) 2026 リョータ</p>
+        <p style="opacity:.8;font-size:0.75rem">使用ライブラリ: <a href="https://github.com/dmotz/trystero" target="_blank" rel="noopener noreferrer">Trystero</a>（MIT License）</p>
+        <h3>このアプリについて</h3>
+        <button class="btn-sub" id="aboutBtn" type="button" style="width:100%">使い方・プライバシーを見る</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="welcomeDialog">
+    <div class="about">
+      <div class="about-head">
+        <strong>ようこそ <span class="alpha-badge">α版</span></strong>
+      </div>
+      <div class="about-body">
+        <p style="margin-top:8px">はじめにご確認ください。</p>
+        <h3>1. マイクを設定する</h3>
+        <p>声が相手に十分な大きさで届くよう、入力レベルを調整できます。</p>
+        <button class="btn-sub" id="welcomeMicBtn" type="button" style="width:100%;margin-top:6px">マイクを設定する</button>
+        <h3>2. このアプリについて読む</h3>
+        <p>使い方と、プライバシー（見える情報、保存されるもの）を説明しています。</p>
+        <button class="btn-sub" id="welcomeAboutBtn" type="button" style="width:100%;margin-top:6px">このアプリについて</button>
+        <label class="sound-toggle" style="margin-top:16px"><input type="checkbox" id="welcomeAgain" checked> 次回も表示する</label>
+        <button class="btn-sub" id="welcomeClose" type="button" style="width:100%;margin-top:12px;background:#2563eb">はじめる</button>
+      </div>
+    </div>
+  </dialog>
 
   <dialog id="aboutDialog">
     <div class="about">
@@ -385,14 +432,16 @@ const HTML = `<!DOCTYPE html>
       <ul>
         <li>音声は、サーバーを通らず、端末どうしで直接送られます。通信はWebRTCの標準の暗号化がかかります。</li>
         <li>このアプリの運営側は、音声を受け取らず、録音も保存もしません（そもそも運営側のサーバーに届きません）。</li>
-        <li>VOX（声で自動送信）をオンにすると、声を検出するために端末の中でマイクの音量を監視します。この監視用の音は送信も保存もされず、声を検出したときだけ送信が始まります。同じ理由で、マイクが使える状態の間は、画面のレベル表示のためにも端末の中で音量を測っています。VOX自体は、ページを開き直すとオフに戻ります（しきい値の設定だけ、端末に保存されます）。</li>
-        <li>マイクは、最初に話すボタンを押したときに許可を求めます。許可後はページを開いている間マイクを確保しますが、ボタンを押していない間は音声を送りません（ブラウザのマイク表示が出たままになることがあります）。</li>
+        <li>VOX（声で自動送信）をオンにすると、声を検出するために端末の中でマイクの音量を監視します。この監視用の音は送信も保存もされず、声を検出したときだけ送信が始まります。同じ理由で、マイクが使える状態の間は、画面のレベル表示のためにも端末の中で音量を測っています。ホーム画面の「マイクテスト」は、入力レベルとメーターの確認のためにマイクを使いますが、音声は送信も保存もされません。VOX自体は、ページを開き直すとオフに戻ります（しきい値の設定だけ、端末に保存されます）。</li>
+        <li>マイクは、部屋に入るときに許可を求めます（許可しなかった場合は、話すボタンを押したときにもう一度確認します）。許可後は、部屋に入っている間マイクを確保しますが、ボタンを押していない間は音声を送りません（ブラウザのマイク使用中の表示は出たままになります）。部屋を退出すると、マイクを解放します。</li>
       </ul>
 
       <h4>あなたの端末に保存されるもの</h4>
       <ul>
         <li><b>ハンドルネーム</b>: ブラウザの localStorage（キー名 pochitalk_ptt_name）に保存されます。次回開いたときに入力済みになります。この端末のブラウザの中だけにあり、運営側には送られません。ブラウザのサイトデータを消すと削除されます。</li>
         <li><b>URLの「?r=…」</b>: 今いる部屋のハッシュ値がアドレスに入ります。ブラウザの履歴に残ることがあります。</li>
+        <li><b>初回案内の表示設定</b>: 初回の案内で「次回も表示する」をオフにしたときだけ、その旨を localStorage（キー名 pochitalk_welcome）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
+        <li><b>入力レベル</b>: マイクの増幅（0〜30dB）の数字を、同じく localStorage（キー名 pochitalk_input_db）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
         <li><b>VOXのしきい値</b>: 1〜10の数字を、同じく localStorage（キー名 pochitalk_vox_thr）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
         <li>Cookie、ログイン情報、メールアドレス、位置情報、連絡先などは、保存も取得もしません。</li>
         <li>アクセス解析や広告の仕組みは入れていません。</li>
@@ -440,7 +489,9 @@ const HTML = `<!DOCTYPE html>
     const soundEffectCheck = document.getElementById('soundEffectCheck');
 
     const rxAnalysers = new Map(); // peerId -> AnalyserNode
-    let txAnalyser = null, txMonitor = null;
+    let sendJoinAge = null, roomEnterTime = 0;
+    let txAnalyser = null;
+    let sendStream = null, micGain = null, micSrc = null, micTest = false, inputDb = 0;
     let audioCtx = null, userMediaStream = null, localAudioTrack = null;
     let room = null, sendPttState = null, sendNickname = null;
     let isTransmitting = false, currentTalkerId = null;
@@ -571,59 +622,84 @@ const HTML = `<!DOCTYPE html>
       return n;
     }
 
-    function playTuneStatic() {
+    // 入室音: 「ピコーン」（短い高音のあとに、伸びる高音）
+    function playEnterTone() {
       if (!soundEffectCheck.checked) return;
       try {
         const ctx = getAudioContext();
-        const dur = 0.32;
-        const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
-        const d = buffer.getChannelData(0);
-        for (let i = 0; i < buffer.length; i++) d[i] = Math.random() * 2 - 1;
-        const src = ctx.createBufferSource(); src.buffer = buffer;
-        const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 2;
-        f.frequency.setValueAtTime(500, ctx.currentTime);
-        f.frequency.exponentialRampToValueAtTime(3200, ctx.currentTime + dur);
-        const g = ctx.createGain();
-        g.gain.setValueAtTime(0.12, ctx.currentTime);
-        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-        src.connect(f); f.connect(g); g.connect(ctx.destination);
-        src.start();
+        const t0 = ctx.currentTime;
+        function note(freq, start, dur, vol) {
+          const osc = ctx.createOscillator(), g = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, t0 + start);
+          g.gain.setValueAtTime(0.001, t0 + start);
+          g.gain.exponentialRampToValueAtTime(vol, t0 + start + 0.01);
+          g.gain.exponentialRampToValueAtTime(0.001, t0 + start + dur);
+          osc.connect(g); g.connect(ctx.destination);
+          osc.start(t0 + start); osc.stop(t0 + start + dur + 0.02);
+        }
+        note(1046.5, 0.00, 0.09, 0.14);   // ピ
+        note(1568.0, 0.08, 0.60, 0.14);   // コーン
+        note(3136.0, 0.08, 0.30, 0.03);   // 響きの倍音
       } catch (_) {}
     }
 
-    // 送信トラックは無効化されるため、表示用に複製したトラックで音量を測る
-    function setupTxAnalyser() {
-      try {
-        txMonitor = userMediaStream.clone();
-        txMonitor.getAudioTracks().forEach(function (t) { t.enabled = true; }); // 複製は送信トラックの無効状態を引き継ぐため
-        const ctx = getAudioContext();
-        txAnalyser = ctx.createAnalyser();
-        txAnalyser.fftSize = 256;
-        txAnalyser.smoothingTimeConstant = 0.6;
-        ctx.createMediaStreamSource(txMonitor).connect(txAnalyser);
-      } catch (_) { txAnalyser = null; }
+    // マイク → 入力レベル(ゲイン) → [レベル計 / 送信用ストリーム]
+    function buildMicGraph(raw) {
+      const ctx = getAudioContext();
+      micSrc = ctx.createMediaStreamSource(raw);
+      micGain = ctx.createGain();
+      micGain.gain.value = Math.pow(10, inputDb / 20);
+      txAnalyser = ctx.createAnalyser();
+      txAnalyser.fftSize = 1024;
+      txAnalyser.smoothingTimeConstant = 0.6;
+      const dest = ctx.createMediaStreamDestination();
+      micSrc.connect(micGain);
+      micGain.connect(txAnalyser);
+      micGain.connect(dest);
+      sendStream = dest.stream;
+      localAudioTrack = sendStream.getAudioTracks()[0];
+      localAudioTrack.enabled = false;
     }
 
-    // マイクは初回のみ取得し、トラックを無効化した状態で全員に一度だけ共有する
-    async function initMicrophone() {
+    // マイクを完全に解放する（ブラウザのマイク使用中表示も消える）
+    function releaseMic() {
+      try { if (room && sendStream) room.removeStream(sendStream); } catch (_) {}
+      try { if (micSrc) micSrc.disconnect(); if (micGain) micGain.disconnect(); } catch (_) {}
+      [userMediaStream, sendStream].forEach(function (st) {
+        if (st) st.getTracks().forEach(function (t) { t.stop(); });
+      });
+      userMediaStream = null; sendStream = null; localAudioTrack = null;
+      micSrc = null; micGain = null; txAnalyser = null;
+    }
+
+    let micPending = null;
+    async function initMicrophone(quiet) {
       if (userMediaStream && localAudioTrack) return true;
-      try {
-        userMediaStream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-          video: false
-        });
-        localAudioTrack = userMediaStream.getAudioTracks()[0];
-        localAudioTrack.enabled = false;
-        setupTxAnalyser();
-        if (room) room.addStream(userMediaStream);
-        return true;
-      } catch (err) {
-        alert('マイクの許可が必要です（HTTPS接続が必要）: ' + err.message);
-        return false;
-      }
+      if (micPending) return micPending;
+      micPending = (async function () {
+        try {
+          const st = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+            video: false
+          });
+          if (!room && !micTest) { st.getTracks().forEach(function (t) { t.stop(); }); return false; } // 取得中に退出した
+          userMediaStream = st;
+          buildMicGraph(st);
+          if (room) room.addStream(sendStream);
+          return true;
+        } catch (err) {
+          if (!quiet) alert('マイクの許可が必要です（HTTPS接続が必要）: ' + err.message);
+          return false;
+        }
+      })();
+      const ok = await micPending;
+      micPending = null;
+      return ok;
     }
 
     function connectToChannel(key) {
+      roomEnterTime = Date.now();
       const roomId = 'h-' + key;
       if (room) {
         room.leave();
@@ -649,6 +725,17 @@ const HTML = `<!DOCTYPE html>
       const nameAction = room.makeAction('pttName');
       sendPttState = pttStateAction[0];
       sendNickname = nameAction[0];
+
+      // 入室してからの経過時間を交換し、新しく来たほうを判定する（既存の人にだけ入室音を鳴らす）
+      const joinAction = room.makeAction('joinAge');
+      sendJoinAge = joinAction[0];
+      joinAction[1](function (data, peerId) {
+        const peer = peerMap.get(peerId);
+        if (!peer || peer.joinJudged || !data || typeof data.age !== 'number') return;
+        peer.joinJudged = true;
+        const myAge = Date.now() - roomEnterTime;
+        if (data.age < myAge - 1000) playEnterTone(); // 相手のほうが新しい = 相手が今入ってきた
+      });
 
       nameAction[1](function (name, peerId) {
         const p = peerMap.get(peerId);
@@ -678,10 +765,17 @@ const HTML = `<!DOCTYPE html>
       });
 
       room.onPeerJoin(function (peerId) {
-        peerMap.set(peerId, { name: '接続中...', isTalking: false });
+        peerMap.set(peerId, { name: '接続中...', isTalking: false, joinJudged: false });
         renderPeers();
         sendNickname(myNickname, peerId);
-        if (userMediaStream) room.addStream(userMediaStream, peerId);
+        if (sendJoinAge) sendJoinAge({ age: Date.now() - roomEnterTime }, peerId);
+        // 相手が経過時間を送ってこない場合（別の実装など）: 自分が20秒以上いるなら、相手は新規とみなす
+        const ageAtJoin = Date.now() - roomEnterTime;
+        setTimeout(function () {
+          const p = peerMap.get(peerId);
+          if (p && !p.joinJudged) { p.joinJudged = true; if (ageAtJoin > 20000) playEnterTone(); }
+        }, 2500);
+        if (sendStream) room.addStream(sendStream, peerId);
       });
 
       room.onPeerLeave(function (peerId) {
@@ -714,7 +808,7 @@ const HTML = `<!DOCTYPE html>
         el.play().catch(function () {});
       });
 
-      if (userMediaStream) room.addStream(userMediaStream);
+      if (sendStream) room.addStream(sendStream);
     }
 
     function renderPeers() {
@@ -842,8 +936,10 @@ const HTML = `<!DOCTYPE html>
 
     function leaveRoom() {
       if (isTransmitting) { pressed = false; stopTransmission(); }
+      if (voxCheck.checked) { voxCheck.checked = false; stopVox(); }
       if (room) { room.leave(); room = null; }
-      sendPttState = null; sendNickname = null;
+      releaseMic();
+      sendPttState = null; sendNickname = null; sendJoinAge = null;
       peerMap.clear();
       currentTalkerId = null;
       document.querySelectorAll('audio[id^="audio-"]').forEach(function (a) { a.remove(); });
@@ -869,14 +965,18 @@ const HTML = `<!DOCTYPE html>
       currentKey = key;
       pendingKey = null;
       try { history.replaceState(null, '', '?r=' + key); } catch (_) {}
-      playTuneStatic();
       freqDisplay.classList.add('tuning');
       let i = 0;
       const t = setInterval(function () {
         if (++i >= 9) { clearInterval(t); renderFreq(currentKey); return; }
         freqDisplay.textContent = fmt(toHex(crypto.getRandomValues(new Uint8Array(4))));
       }, 45);
+      endMicTest();
       connectToChannel(currentKey);
+      // 入室のタップ操作の中でマイクの許可を求める（許可されなければ、話すときにもう一度確認する）
+      initMicrophone(true).then(function (ok) {
+        if (!ok && room && !userMediaStream) flashSub('マイクが許可されていません。話すときに再度確認します');
+      });
       announce();
       renderScan();
     }
@@ -956,6 +1056,28 @@ const HTML = `<!DOCTYPE html>
     });
 
     const aboutDialog = document.getElementById('aboutDialog');
+    const settingsDialog = document.getElementById('settingsDialog');
+    const welcomeDialog = document.getElementById('welcomeDialog');
+    function openDialog(d) { if (d.showModal) d.showModal(); else d.setAttribute('open', ''); }
+    document.getElementById('settingsBtn').addEventListener('click', function () { openDialog(settingsDialog); });
+    function closeSettings() { settingsDialog.close(); endMicTest(); if (!room) releaseMic(); }
+    document.getElementById('settingsClose').addEventListener('click', closeSettings);
+    settingsDialog.addEventListener('click', function (e) { if (e.target === settingsDialog) closeSettings(); });
+    // 設定を閉じたら、マイクテストを止めてマイクを解放する（入室中は部屋が使うのでそのまま）
+    settingsDialog.addEventListener('close', function () { endMicTest(); if (!room) releaseMic(); });
+    document.getElementById('welcomeMicBtn').addEventListener('click', function () { openDialog(settingsDialog); });
+    document.getElementById('welcomeAboutBtn').addEventListener('click', function () { openDialog(aboutDialog); });
+    document.getElementById('welcomeClose').addEventListener('click', function () { welcomeDialog.close(); });
+    // 初回案内の表示設定: オフにしたときだけ記録する（設定の中とダイアログのチェックは同じ値）
+    const welcomeAgain = document.getElementById('welcomeAgain'), welcomeAgain2 = document.getElementById('welcomeAgain2');
+    function getWelcomeOn() { try { return localStorage.getItem('pochitalk_welcome') !== 'off'; } catch (_) { return true; } }
+    function setWelcomeOn(on) {
+      try { if (on) localStorage.removeItem('pochitalk_welcome'); else localStorage.setItem('pochitalk_welcome', 'off'); } catch (_) {}
+      welcomeAgain.checked = welcomeAgain2.checked = on;
+    }
+    welcomeAgain.checked = welcomeAgain2.checked = getWelcomeOn();
+    welcomeAgain.addEventListener('change', function () { setWelcomeOn(welcomeAgain.checked); });
+    welcomeAgain2.addEventListener('change', function () { setWelcomeOn(welcomeAgain2.checked); });
     document.getElementById('aboutBtn').addEventListener('click', function () {
       if (aboutDialog.showModal) aboutDialog.showModal(); else aboutDialog.setAttribute('open', '');
     });
@@ -970,7 +1092,7 @@ const HTML = `<!DOCTYPE html>
     const voxSens = document.getElementById('voxSens');
     const VOX_HOLD_MS = 1200;   // 声が止んでからこの時間で送信終了
     const VOX_COOLDOWN_MS = 700; // 終了音を拾って再送信しないための待ち
-    let voxStream = null, voxAnalyser = null, voxTimer = null, voxBuf = null;
+    let voxAnalyser = null, voxTimer = null, voxBuf = null;
     let voxHits = 0, voxLastVoice = 0, voxCooldownUntil = 0, voxInitiated = false;
 
     function voxThreshold() { return 0.02 + (parseInt(voxSens.value, 10) - 1) * 0.007; }
@@ -1013,15 +1135,9 @@ const HTML = `<!DOCTYPE html>
     async function startVox() {
       getAudioContext();
       const ok = await initMicrophone();
-      if (!ok) { voxCheck.checked = false; return; }
-      // 送信用トラックは無効化されているので、監視用に複製したトラックを使う
-      voxStream = userMediaStream.clone();
-      voxStream.getAudioTracks().forEach(function (t) { t.enabled = true; });
-      const ctx = getAudioContext();
-      voxAnalyser = ctx.createAnalyser();
-      voxAnalyser.fftSize = 1024;
+      if (!ok || !txAnalyser) { voxCheck.checked = false; return; }
+      voxAnalyser = txAnalyser; // 入力レベル調整後の音量で判定する
       voxBuf = new Float32Array(voxAnalyser.fftSize);
-      ctx.createMediaStreamSource(voxStream).connect(voxAnalyser);
       voxPanel.classList.remove('hidden');
       updateVoxThrMarker();
       voxTimer = setInterval(voxTick, 50);
@@ -1029,7 +1145,6 @@ const HTML = `<!DOCTYPE html>
 
     function stopVox() {
       clearInterval(voxTimer); voxTimer = null;
-      if (voxStream) { voxStream.getTracks().forEach(function (t) { t.stop(); }); voxStream = null; }
       voxAnalyser = null;
       voxPanel.classList.add('hidden');
       voxFill.style.width = '0';
@@ -1047,27 +1162,12 @@ const HTML = `<!DOCTYPE html>
       try { localStorage.setItem('pochitalk_vox_thr', voxSens.value); } catch (_) {}
     });
 
-    // ---------- 音声レベル ----------
-    (function () {
-      const lv = document.getElementById('levelCanvas').getContext('2d');
-      const lvW = document.getElementById('levelCanvas').width, lvH = document.getElementById('levelCanvas').height;
-      const levelLabel = document.getElementById('levelLabel');
-      const levelDb = document.getElementById('levelDb');
-      const SEGS = 24;
+    // ---------- 音声レベル（部屋の中・ホームのマイクテスト共通）----------
+    function makeMeter(canvas, dbEl, labelEl) {
+      const lv = canvas.getContext('2d');
+      const W = canvas.width, H = canvas.height, SEGS = 24;
       let level = 0, peak = 0, peakHoldUntil = 0, td = null;
-
-      function pickSource() {
-        if (isTransmitting && txAnalyser) return { an: txAnalyser, color: '#ef4444' };
-        if (currentTalkerId && rxAnalysers.get(currentTalkerId)) return { an: rxAnalysers.get(currentTalkerId), color: '#10b981' };
-        if (txAnalyser) return { an: txAnalyser, color: '#3b82f6', idle: true };
-        return null;
-      }
-
-      function draw() {
-        requestAnimationFrame(draw);
-        if (document.getElementById('radioView').classList.contains('hidden')) return;
-        const src = pickSource();
-        // ---- レベルメーター（音量 dB、ピークホールド付き）----
+      return function (src) {
         let target = 0, db = -Infinity;
         if (src) {
           if (!td || td.length !== src.an.fftSize) td = new Uint8Array(src.an.fftSize);
@@ -1079,26 +1179,70 @@ const HTML = `<!DOCTYPE html>
           target = Math.min(1, Math.max(0, (db + 60) / 60));
         }
         level += (target - level) * (target > level ? 0.5 : 0.12);
-        const nowMs = performance.now();
-        if (level >= peak) { peak = level; peakHoldUntil = nowMs + 800; }
-        else if (nowMs > peakHoldUntil) peak = Math.max(level, peak - 0.02);
-        lv.clearRect(0, 0, lvW, lvH);
-        const sg = 3, sw = (lvW - sg * (SEGS - 1)) / SEGS;
+        const now = performance.now();
+        if (level >= peak) { peak = level; peakHoldUntil = now + 800; }
+        else if (now > peakHoldUntil) peak = Math.max(level, peak - 0.02);
+        lv.clearRect(0, 0, W, H);
+        const sg = 3, sw = (W - sg * (SEGS - 1)) / SEGS;
         for (let i = 0; i < SEGS; i++) {
           const pos = (i + 1) / SEGS;
           const on = pos <= level + 0.001;
           const isPeak = Math.abs(pos - peak) < 0.5 / SEGS + 0.001 && peak > 0.02;
-          const col = pos > 0.85 ? '#ef4444' : pos > 0.65 ? '#fbbf24' : '#10b981';
           lv.globalAlpha = (on || isPeak) ? 1 : 0.16;
-          lv.fillStyle = col;
-          lv.fillRect(i * (sw + sg), 0, sw, lvH);
+          lv.fillStyle = pos > 0.85 ? '#ef4444' : pos > 0.65 ? '#fbbf24' : '#10b981';
+          lv.fillRect(i * (sw + sg), 0, sw, H);
         }
         lv.globalAlpha = 1;
-        levelDb.textContent = isFinite(db) ? Math.round(db) + ' dB' : '-∞ dB';
-        levelLabel.textContent = !src ? 'LEVEL' : (src.idle ? 'MIC' : (isTransmitting ? 'TX' : 'RX'));
+        dbEl.textContent = isFinite(db) ? Math.round(db) + ' dB' : '-∞ dB';
+        if (labelEl) labelEl.textContent = !src ? 'LEVEL' : (src.idle ? 'MIC' : (isTransmitting ? 'TX' : 'RX'));
+      };
+    }
+
+    (function () {
+      const roomMeter = makeMeter(document.getElementById('levelCanvas'), document.getElementById('levelDb'), document.getElementById('levelLabel'));
+      const homeMeter = makeMeter(document.getElementById('homeLevelCanvas'), document.getElementById('homeLevelDb'), null);
+      const radioView = document.getElementById('radioView');
+      const homeView = document.getElementById('homeView');
+
+      function pickSource() {
+        if (isTransmitting && txAnalyser) return { an: txAnalyser };
+        if (currentTalkerId && rxAnalysers.get(currentTalkerId)) return { an: rxAnalysers.get(currentTalkerId) };
+        if (txAnalyser) return { an: txAnalyser, idle: true };
+        return null;
+      }
+
+      function draw() {
+        requestAnimationFrame(draw);
+        if (!radioView.classList.contains('hidden')) roomMeter(pickSource());
+        else if (!homeView.classList.contains('hidden')) homeMeter(micTest && txAnalyser ? { an: txAnalyser, idle: true } : null);
       }
       requestAnimationFrame(draw);
     })();
+
+    // ---------- 入力レベル（マイクの増幅 0〜30dB）----------
+    const homeGain = document.getElementById('homeGain');
+    const homeGainVal = document.getElementById('homeGainVal');
+    function setInputDb(v, save) {
+      inputDb = Math.min(30, Math.max(0, parseInt(v, 10) || 0));
+      homeGain.value = inputDb;
+      const label = inputDb === 0 ? 'そのまま' : '+' + inputDb + ' dB';
+      homeGainVal.textContent = label;
+      if (micGain) micGain.gain.value = Math.pow(10, inputDb / 20);
+      if (save) { try { localStorage.setItem('pochitalk_input_db', String(inputDb)); } catch (_) {} }
+    }
+    try { setInputDb(localStorage.getItem('pochitalk_input_db'), false); } catch (_) { setInputDb(0, false); }
+    homeGain.addEventListener('input', function () { setInputDb(homeGain.value, true); });
+
+    // ホームのマイクテスト（入室しなくても、入力レベルとメーターを確認できる）
+    const micTestBtn = document.getElementById('micTestBtn');
+    function endMicTest() { micTest = false; micTestBtn.textContent = 'マイクテスト開始'; }
+    micTestBtn.addEventListener('click', async function () {
+      if (micTest) { endMicTest(); if (!room) releaseMic(); return; }
+      micTest = true;
+      micTestBtn.textContent = 'マイクテスト停止';
+      const ok = await initMicrophone();
+      if (!ok) endMicTest();
+    });
 
     document.getElementById('leaveBtn').addEventListener('click', function () { leaveRoom(); });
     document.getElementById('leaveBtn2').addEventListener('click', function () { leaveRoom(); });
@@ -1134,6 +1278,8 @@ const HTML = `<!DOCTYPE html>
       announce();
       renderScan();
     });
+
+    if (getWelcomeOn()) openDialog(welcomeDialog);
 
     (async function init() {
       const p = (urlParams.get('r') || '').trim().toLowerCase();
