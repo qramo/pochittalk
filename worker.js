@@ -257,6 +257,9 @@ const HTML = `<!DOCTYPE html>
     button.btn-sub.invite-join:hover { background: #1d4ed8; }
     .invite-links { display: flex; gap: 18px; }
     .linklike { background: none; border: none; color: #93c5fd; text-decoration: underline; font-size: 0.78rem; cursor: pointer; padding: 2px 4px; }
+    .app-version { width: 100%; max-width: 400px; text-align: center; font-size: 0.7rem; color: var(--muted-color); opacity: .6; margin: 12px 0 4px; user-select: text; -webkit-user-select: text; }
+    .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #111827; color: #fff; border: 1px solid #fbbf24; border-radius: 12px; padding: 10px 16px; font-size: 0.85rem; z-index: 50; max-width: 90%; text-align: center; box-shadow: 0 6px 18px rgba(0,0,0,0.5); }
+    .chan-chip.full { opacity: .55; }
     .chan-chip.invited { border-color: #fbbf24; box-shadow: 0 0 8px rgba(251,191,36,0.35); }
     .tune-actions #qrBtn { flex: none; width: 64px; padding: 6px 0; line-height: 1; display: flex; align-items: center; justify-content: center; }
     .back-face {
@@ -293,7 +296,8 @@ const HTML = `<!DOCTYPE html>
     .lcd-freq small { font-size: 0.9rem; letter-spacing: 1px; margin-left: 6px; opacity: .8; }
     .lcd-freq.tuning { opacity: .45; animation: blink .35s steps(2) infinite; }
     @keyframes blink { 50% { opacity: .9; } }
-    .lcd-sub { font-size: 0.72rem; color: var(--muted-color); min-height: 1em; }
+    .lcd-sub { font-size: 0.72rem; color: var(--muted-color); min-height: 1em; white-space: nowrap; overflow: hidden; }
+    .fax-paper { width: 100%; image-rendering: pixelated; background: #f8f8f2; border-radius: 4px; display: block; margin-top: 6px; }
     .tuner { display: flex; flex-direction: column; gap: 10px; }
     .dial-row { display: flex; align-items: center; gap: 8px; }
     .step-btn { width: 40px; height: 40px; border-radius: 10px; border: none; background: #374151; color: #fff; font-size: 1rem; cursor: pointer; flex: none; }
@@ -316,6 +320,7 @@ const HTML = `<!DOCTYPE html>
     .room-panel { width: 100%; max-width: 400px; margin-top: 16px; background: var(--card-bg); border: 2px solid #374151; border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
     .chan-chip { text-align: left; }
     .chip-who { font-family: -apple-system, 'Segoe UI', sans-serif; font-size: 0.72rem; color: var(--muted-color); margin-top: 2px; max-width: 220px; }
+    .chip-name { display: inline-block; } /* 名前の途中では改行しない（区切りの「、」の後でのみ折る） */
     .scan-list { flex-direction: column; }
     .chan-chip:active { transform: scale(.96); }
     .config-panel { display: flex; flex-direction: column; gap: 10px; font-size: 0.85rem; }
@@ -388,6 +393,7 @@ const HTML = `<!DOCTYPE html>
         <div class="lcd-sub" id="lcdSub"></div>
         <div class="level-row"><span class="level-label" id="levelLabel">LEVEL</span><canvas class="level" id="levelCanvas" width="280" height="14"></canvas><span class="level-db" id="levelDb">-∞ dB</span></div>
       </div>
+      <canvas id="faxCanvas" width="240" height="15" class="fax-paper hidden"></canvas>
       <div class="tag-row">
         <span class="tag-text" id="tagText"></span>
         <button class="btn-sub" id="tagEdit" type="button" style="padding:4px 10px;font-size:0.75rem">つける</button>
@@ -421,6 +427,7 @@ const HTML = `<!DOCTYPE html>
       </div>
       <div class="controls-info">
         <span class="pc-only"><kbd class="key-badge">Space</kbd> キーでも話せます</span>
+        <br><span class="pc-only">文字キーを打つと、その文字のモールス符号を送信します（受信したモールスは文字に直して液晶下に表示します）</span>
       </div>
     </section>
     <footer class="config-panel">
@@ -454,6 +461,10 @@ const HTML = `<!DOCTYPE html>
   </section>
 
 
+  <div class="app-version" id="appVersion">版 __VERSION__</div>
+
+  <div class="toast hidden" id="toast" role="status"></div>
+
   <dialog id="settingsDialog">
     <div class="about">
       <div class="about-head">
@@ -475,6 +486,9 @@ const HTML = `<!DOCTYPE html>
         </div>
         <p style="opacity:.8;font-size:0.75rem;margin:6px 0 10px">片手で持つときに、親指が届く側に寄せられます。VOX の丸ボタンは、空いている側に付きます。</p>
         <label class="sound-toggle"><input type="checkbox" id="leftyCheck"> 左手用（話すボタンが中央のとき、VOX ボタンを右側に置く）</label>
+        <h3>通話テスト</h3>
+        <p style="font-size:0.8rem;opacity:.85;margin-bottom:6px">おうむ返しボットが動いているときだけ使えます。話すと、あなたの声が返ってきます。</p>
+        <button class="btn-sub" id="testRoomBtn" type="button" style="width:100%">おうむ返しの部屋に入る</button>
         <h3>効果音</h3>
         <label class="vox-sens" style="margin:10px 0"><span>音量</span><input type="range" id="sfxVol" min="0" max="150" step="5" value="100"><span class="gain-val" id="sfxVolVal">100%</span></label>
         <p style="opacity:.8;font-size:0.75rem">スライダーを離すと、試しに「ガッ」と鳴ります。効果音を消したいときは、音量を 0% にしてください。</p>
@@ -488,6 +502,7 @@ const HTML = `<!DOCTYPE html>
         <p style="opacity:.8;font-size:0.75rem">使用ライブラリ: <a href="https://github.com/dmotz/trystero" target="_blank" rel="noopener noreferrer">Trystero</a>（MIT License）</p>
         <h3>このアプリについて</h3>
         <button class="btn-sub" id="aboutBtn" type="button" style="width:100%">使い方・プライバシーを見る</button>
+        <p style="opacity:.55;font-size:0.7rem;margin-top:10px">版: __VERSION__</p>
       </div>
     </div>
   </dialog>
@@ -531,7 +546,8 @@ const HTML = `<!DOCTYPE html>
         <li>部屋の中のQRボタンを押すと、無線機が裏返って、招待URLのQRコードが出ます。友達がスマホで読み取ると、同じ部屋に入れます。「もどる」で表に戻ります。</li>
         <li>部屋の中では、「話題タグ」をつけられます（30文字まで）。誰でも変えられ、付けた人の名前が添えられます。部屋の一覧にも表示されます。</li>
         <li>相手が見つからない、声が届かなくなったときは、「再接続」を押すと、部屋に入ったまま接続をやり直します。回線が戻ったときや、画面を離れて（バックグラウンドに回って）戻ったときは、自動でやり直します。iPhone は、画面を消したりほかのアプリに切り替えたりすると通話が止まるので、アプリに戻ってください。</li>
-        <li>人数の目安は1部屋あたり6〜8人までです。</li>
+        <li>部屋の一覧の人数と、実際につながっている人数が、10秒以上合わないときは、画面に知らせが出ます。25秒たっても合わないときは、自動でつなぎ直します。相手が、ブラウザを突然閉じたときは、一覧の表示が、20秒ほど残ります。それでも合わないときは、「再接続」を押してください。</li>
+        <li>1つの部屋は、8人までです。満員の部屋には、入れません。同時に入って超えたときは、あとから入った人が、自動で退出します。</li>
       </ul>
 
       <h3>プライバシー</h3>
@@ -546,7 +562,7 @@ const HTML = `<!DOCTYPE html>
 
       <h4>音声について</h4>
       <ul>
-        <li>音声は、サーバーを通らず、端末どうしで直接送られます。通信はWebRTCの標準の暗号化がかかります。</li>
+        <li>音声は、通常、端末どうしで直接送られます。直接つながれない場合だけ、CloudflareのTURNサーバーを中継して送られます。通信はWebRTCの標準の暗号化がかかるため、中継サーバーが内容を聞くことはできません。TURNが使えないときは、端末どうしの直接通信に切り替わります。</li>
         <li>このアプリの運営側は、音声を受け取らず、録音も保存もしません（そもそも運営側のサーバーに届きません）。</li>
         <li>VOX（声で自動送信）をオンにすると、声を検出するために端末の中でマイクの音量を監視します。この監視用の音は送信も保存もされず、声を検出したときだけ送信が始まります。同じ理由で、マイクが使える状態の間は、画面のレベル表示のためにも端末の中で音量を測っています。ホーム画面の「マイクテスト」は、入力レベルとメーターの確認のためにマイクを使いますが、音声は送信も保存もされません。VOX自体は、ページを開き直すとオフに戻ります（しきい値の設定だけ、端末に保存されます）。</li>
         <li>マイクは、部屋に入るときに許可を求めます（許可しなかった場合は、話すボタンを押したときにもう一度確認します）。許可後は、部屋に入っている間マイクを確保しますが、ボタンを押していない間は音声を送りません（ブラウザのマイク使用中の表示は出たままになります）。部屋を退出すると、マイクを解放します。</li>
@@ -575,8 +591,8 @@ const HTML = `<!DOCTYPE html>
       <h4>外部のサービスについて</h4>
       <ul>
         <li><b>esm.sh</b>: 通話用のライブラリ（Trystero）の配信元です。ページを開くと、ここにもアクセスが発生します。QRコードを作るライブラリも、ここから配信されます（QRのボタンを押したときだけ読み込みます。QRは、端末の中で作られ、招待URLは外に送られません）。</li>
-        <li><b>Nostr の公開リレー</b>: 通話相手を見つけるための接続情報のやり取りに使います。内容は暗号化されますが、接続元IPなどのアクセス情報はリレーの運営者に見える可能性があります。</li>
-        <li><b>STUNサーバー（Cloudflare・Google）</b>: 端末どうしが直接つながるための、公開されたアドレスの確認に使います。IPアドレスがこれらに送られます。</li>
+        <li><b>Nostr の公開リレー</b>: 通話相手を見つけるための接続情報のやり取りと、部屋の一覧のための在室の知らせ（部屋のハッシュ、ハンドルネーム、話題タグ、話しているか）の送受信に使います。内容は暗号化されますが、接続元IPなどのアクセス情報はリレーの運営者に見える可能性があります。</li>
+        <li><b>STUN / TURNサーバー（Cloudflare・Google）</b>: 端末どうしが直接つながるための、公開されたアドレスの確認に使います。IPアドレスがこれらに送られます。</li>
         <li>これらは運営側が管理していない外部のサービスです。</li>
       </ul>
 
@@ -591,7 +607,7 @@ const HTML = `<!DOCTYPE html>
   </dialog>
 
   <script type="module">
-    import { joinRoom } from 'https://esm.sh/trystero@0.20.0/nostr';
+    import { joinRoom } from '/vendor/trystero-0.25.4.mjs';
 
     const pttBtn = document.getElementById('pttBtn');
     const ledTx = document.getElementById('ledTx');
@@ -612,10 +628,71 @@ const HTML = `<!DOCTYPE html>
     let sendTag = null, roomMeta = { tag: '', by: '', at: 0 }; // 話題タグ（誰でも上書き・新しいものが勝つ）
     let txAnalyser = null;
     let sendStream = null, micGain = null, micSrc = null, micTest = false, inputDb = 0;
+    let micSendGain = null, morseOsc = null, morseGain = null; // モールス送信用
+    let faxOsc = null, faxGain = null, faxSideGain = null; // FAX送信用
     let audioCtx = null, userMediaStream = null, localAudioTrack = null;
-    let room = null, sendPttState = null, sendNickname = null;
+    let room = null, sendPttState = null, sendNickname = null, sendFaxPage = null;
     let isTransmitting = false, currentTalkerId = null;
     const peerMap = new Map();
+
+    // ===== ICE / TURN（po_call の安定化方式を移植）=====
+    // ・TURN が取れている間は中継固定（relay）: キャリア回線でも経路が一本に定まって安定し、相手に IP も見えなくなる。
+    //   取れていないときだけ従来どおり STUN＋直接（relay を強制すると候補ゼロで誰も繋がらない）。
+    // ・iceServersNow は「同じ配列の中身だけ入れ替える」安定参照。Trystero は接続を作るたびに
+    //   rtcConfig.iceServers を参照で読むため、通話中に入れ替えても以降の参加者には新しい資格情報が渡る。
+    // ・資格情報は10分キャッシュ、5分ごとに取り直し。失敗しても前回の資格情報が生きていればそれを使う。
+    const GOOGLE_STUN = { urls: 'stun:stun.l.google.com:19302' };
+    const iceServersNow = [
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      GOOGLE_STUN
+    ];
+    let iceFetchedAt = 0;
+    const ICE_CACHE_MS = 10 * 60 * 1000;
+    async function refreshIceServers(force) {
+      if (!force && iceFetchedAt && Date.now() - iceFetchedAt < ICE_CACHE_MS) return;
+      try {
+        const res = await fetch('/api/turn', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && Array.isArray(data.iceServers) && data.iceServers.length) {
+          iceServersNow.splice(0, iceServersNow.length, ...data.iceServers, GOOGLE_STUN);
+          iceFetchedAt = Date.now();
+        }
+      } catch (_) {}
+    }
+    // 中継固定にすると、接続の準備が、相手の応答に間に合いにくく、つながりにくくなる（通話の部品の作り上）。通常は、直接を優先し、つながらないときだけ TURN 中継にする。固定したいときは ?relay=1 を付けて開く
+    const FORCE_RELAY = new URLSearchParams(location.search).has('relay');
+    function getRtcConfig() {
+      // Trystero 0.25.4 は、rtcConfig を RTCPeerConnection の設定として、そのまま使う（0.20.0 のような config の入れ子は不要）
+      return iceFetchedAt > 0
+        ? { iceServers: iceServersNow, iceTransportPolicy: FORCE_RELAY ? 'relay' : 'all' }
+        : { iceServers: iceServersNow };
+    }
+    // シグナリング用 Nostr リレー（po_call と同じ顔ぶれを全本使う）
+    // 通話の識別名。Trystero 0.25.x は、0.20.0 と通信の形式が違うため、識別名も新しくして、古い版とは別の世界にする
+    const APP_ID = 'pochitalk-v2';
+    const NOSTR_RELAY_URLS = ['wss://relay.primal.net', 'wss://purplerelay.com', 'wss://bucket.coracle.social', 'wss://yabu.me/v2', 'wss://x.kojira.io', 'wss://relay.notoshi.win', 'wss://relay.ditto.pub'];
+    // 使うリレーは、起動時に、動いているものを選ぶ。接続の準備の数は、リレーの数に比例して増え、落ちているリレーは再試行を繰り返すため
+    let ROOM_RELAYS = NOSTR_RELAY_URLS, aliveRelays = NOSTR_RELAY_URLS;
+    function probeRelayMain(url) {
+      return new Promise(function (resolve) {
+        let settled = false, ws = null, timer = null;
+        const done = function (ok) { if (!settled) { settled = true; clearTimeout(timer); resolve(ok); } };
+        try { ws = new WebSocket(url); } catch (_) { done(false); return; }
+        timer = setTimeout(function () { done(false); }, 6000);
+        ws.onopen = function () { done(true); try { ws.close(); } catch (_) {} };
+        ws.onerror = function () { done(false); };
+        ws.onclose = function () { done(false); };
+      });
+    }
+    (async function pickRelaysMain() {
+      try {
+        const res = await Promise.all(NOSTR_RELAY_URLS.map(function (u) { return probeRelayMain(u).then(function (ok) { return { u: u, ok: ok }; }); }));
+        const alive = res.filter(function (r) { return r.ok; }).map(function (r) { return r.u; }).sort(function () { return Math.random() - 0.5; });
+        if (alive.length >= 1) { aliveRelays = alive.slice(0, 4); ROOM_RELAYS = alive.slice(0, 3); }
+        if (pres.started) aliveRelays.forEach(presenceOpen);
+      } catch (_) {}
+    })();
 
     const urlParams = new URLSearchParams(window.location.search);
     function isKey(k) { return /^[0-9a-f]{8}$/.test(k); }
@@ -787,7 +864,34 @@ const HTML = `<!DOCTYPE html>
       const dest = ctx.createMediaStreamDestination();
       micSrc.connect(micGain);
       micGain.connect(txAnalyser);
-      micGain.connect(dest);
+      micSendGain = ctx.createGain();
+      micGain.connect(micSendGain);
+      micSendGain.connect(dest);
+      // モールス送信用トーン（普段は無音。モールス送信中はマイク側を絞ってトーンだけを送る）
+      morseOsc = ctx.createOscillator();
+      morseOsc.type = 'sine';
+      morseOsc.frequency.value = 700;
+      morseGain = ctx.createGain();
+      morseGain.gain.value = 0;
+      morseOsc.connect(morseGain);
+      morseGain.connect(dest);
+      morseGain.connect(txAnalyser);
+      morseGain.connect(sfxOut(ctx));
+      morseOsc.start();
+      // FAX送信用トーン（周波数を切り替えて使う）
+      faxOsc = ctx.createOscillator();
+      faxOsc.type = 'sine';
+      faxOsc.frequency.value = 1500;
+      faxGain = ctx.createGain();
+      faxGain.gain.value = 0;
+      faxOsc.connect(faxGain);
+      faxGain.connect(dest);
+      faxGain.connect(txAnalyser);
+      faxSideGain = ctx.createGain();
+      faxSideGain.gain.value = 0.3; // 自分の耳に返す音は小さめに（つんざくので）
+      faxGain.connect(faxSideGain);
+      faxSideGain.connect(sfxOut(ctx));
+      faxOsc.start();
       sendStream = dest.stream;
       localAudioTrack = sendStream.getAudioTracks()[0];
       localAudioTrack.enabled = false;
@@ -795,13 +899,17 @@ const HTML = `<!DOCTYPE html>
 
     // マイクを完全に解放する（ブラウザのマイク使用中表示も消える）
     function releaseMic() {
+      abortMorse();
+      abortFax();
       try { if (room && sendStream) room.removeStream(sendStream); } catch (_) {}
       try { if (micSrc) micSrc.disconnect(); if (micGain) micGain.disconnect(); } catch (_) {}
       [userMediaStream, sendStream].forEach(function (st) {
         if (st) st.getTracks().forEach(function (t) { t.stop(); });
       });
+      try { if (morseOsc) { morseOsc.stop(); morseOsc.disconnect(); } if (morseGain) morseGain.disconnect(); if (micSendGain) micSendGain.disconnect(); if (faxOsc) { faxOsc.stop(); faxOsc.disconnect(); } if (faxGain) faxGain.disconnect(); if (faxSideGain) faxSideGain.disconnect(); } catch (_) {}
       userMediaStream = null; sendStream = null; localAudioTrack = null;
       micSrc = null; micGain = null; txAnalyser = null;
+      micSendGain = null; morseOsc = null; morseGain = null;
     }
 
     let micPending = null;
@@ -829,6 +937,19 @@ const HTML = `<!DOCTYPE html>
       return ok;
     }
 
+
+    // Trystero 0.25.4 の API 差を吸収する小さな部品（0.20.0 の書き方のまま、呼び出し側を動かすため）
+    //  ・makeAction は、{ send, onMessage } を返す。受信は onMessage(data, { peerId })。送信は send(data, { target })
+    //  ・onPeerJoin / onPeerLeave / onPeerStream は、関数を代入して設定する
+    function actionOf(r, id) {
+      const a = r.makeAction(id);
+      return [
+        function (data, peerId) { return a.send(data, peerId ? { target: peerId } : undefined); },
+        function (handler) { a.onMessage = function (data, info) { handler(data, info && info.peerId); }; }
+      ];
+    }
+    function setHandler(r, name, fn) { r[name] = fn; }
+
     function connectToChannel(key) {
       roomEnterTime = Date.now();
       roomMeta = { tag: '', by: '', at: 0 };
@@ -839,29 +960,26 @@ const HTML = `<!DOCTYPE html>
         room.leave();
         peerMap.clear();
         rxAnalysers.clear();
+        rxDecoders.clear();
         currentTalkerId = null;
         document.querySelectorAll('audio[id^="audio-"]').forEach(function (a) { a.remove(); });
         ledRx.classList.remove('active');
         renderPeers();
       }
       room = joinRoom({
-        appId: 'pochitalk-walkie-talkie-cf-worker',
-        rtcConfig: {
-          iceServers: [
-            { urls: 'stun:stun.cloudflare.com:3478' },
-            { urls: 'stun:stun.l.google.com:19302' }
-          ]
-        }
-      }, roomId);
+        appId: APP_ID,
+        relayConfig: { urls: ROOM_RELAYS, warnOnRelayFailure: false },
+        rtcConfig: getRtcConfig()
+      }, roomId, { onJoinError: function (d) { try { console.warn('join error:', d && d.error); } catch (_) {} } });
 
       // makeAction は同じ名前を1回しか登録できないので、送受信を一度に受け取る
-      const pttStateAction = room.makeAction('pttState');
-      const nameAction = room.makeAction('pttName');
+      const pttStateAction = actionOf(room, 'pttState');
+      const nameAction = actionOf(room, 'pttName');
       sendPttState = pttStateAction[0];
       sendNickname = nameAction[0];
 
       // 話題タグ: 全員へ送る。新しい(at が大きい)ほうを採用する
-      const tagAction = room.makeAction('roomTag');
+      const tagAction = actionOf(room, 'roomTag');
       sendTag = tagAction[0];
       tagAction[1](function (data) {
         if (!data || typeof data.at !== 'number' || data.at <= roomMeta.at) return;
@@ -870,10 +988,15 @@ const HTML = `<!DOCTYPE html>
       });
 
       // 入室してからの経過時間を交換し、新しく来たほうを判定する（既存の人にだけ入室音を鳴らす）
-      const joinAction = room.makeAction('joinAge');
+      const faxAction = actionOf(room, 'faxPage');
+      sendFaxPage = faxAction[0];
+      faxAction[1](function (data, peerId) { onFaxPage(data, peerId); });
+
+      const joinAction = actionOf(room, 'joinAge');
       sendJoinAge = joinAction[0];
       joinAction[1](function (data, peerId) {
         const peer = peerMap.get(peerId);
+        if (peer && data && typeof data.age === 'number') { peer.enteredAt = Date.now() - data.age; setTimeout(checkRoomFull, 500); }
         if (!peer || peer.joinJudged || !data || typeof data.age !== 'number') return;
         peer.joinJudged = true;
         const myAge = Date.now() - roomEnterTime;
@@ -889,6 +1012,7 @@ const HTML = `<!DOCTYPE html>
         const peer = peerMap.get(peerId);
         if (peer) peer.isTalking = state.isTalking;
         if (state.isTalking) {
+          resetRxDecode(peerId);
           currentTalkerId = peerId;
           if (isTransmitting) {
             // 同時に話し始めた: 両方とも送信が切れて混線
@@ -902,14 +1026,16 @@ const HTML = `<!DOCTYPE html>
             onStartReceiving((peer && peer.name) || '相手');
           }
         } else if (currentTalkerId === peerId) {
+          setTimeout(function () { flushRxDecode(peerId); }, 600); // 音声の末尾が届き切ってから確定する
           onStopReceiving();
         }
         renderPeers();
       });
 
-      room.onPeerJoin(function (peerId) {
+      setHandler(room, 'onPeerJoin', function (peerId) {
         peerMap.set(peerId, { name: '接続中...', isTalking: false, joinJudged: false });
         renderPeers();
+        setTimeout(checkRoomFull, 3000);
         sendNickname(myNickname, peerId);
         if (sendJoinAge) sendJoinAge({ age: Date.now() - roomEnterTime }, peerId);
         if (sendTag && roomMeta.at > 0) sendTag(roomMeta, peerId); // 後から来た人にも今のタグを伝える
@@ -919,19 +1045,22 @@ const HTML = `<!DOCTYPE html>
           const p = peerMap.get(peerId);
           if (p && !p.joinJudged) { p.joinJudged = true; if (ageAtJoin > 20000) playEnterTone(); }
         }, 2500);
-        if (sendStream) room.addStream(sendStream, peerId);
+        if (sendStream) room.addStream(sendStream, { target: peerId });
       });
 
-      room.onPeerLeave(function (peerId) {
+      setHandler(room, 'onPeerLeave', function (peerId) {
         peerMap.delete(peerId);
         rxAnalysers.delete(peerId);
+        rxDecoders.delete(peerId);
+        faxDecoders.delete(peerId);
+        cancelFaxReveal(peerId);
         if (currentTalkerId === peerId) onStopReceiving();
         const el = document.getElementById('audio-' + peerId);
         if (el) el.remove();
         renderPeers();
       });
 
-      room.onPeerStream(function (stream, peerId) {
+      setHandler(room, 'onPeerStream', function (stream, peerId) {
         let el = document.getElementById('audio-' + peerId);
         if (!el) {
           el = document.createElement('audio');
@@ -949,6 +1078,11 @@ const HTML = `<!DOCTYPE html>
           an.smoothingTimeConstant = 0.6;
           ctx.createMediaStreamSource(stream).connect(an);
           rxAnalysers.set(peerId, an);
+          const dan = ctx.createAnalyser();
+          dan.fftSize = 1024;
+          dan.smoothingTimeConstant = 0.05;
+          ctx.createMediaStreamSource(stream).connect(dan);
+          rxDecoders.set(peerId, { an: dan, freq: new Uint8Array(dan.frequencyBinCount), tone: false, toneAt: 0, offAt: 0, pat: '', text: '', letterDone: false, wordDone: false });
         } catch (_) {}
         el.play().catch(function () {});
       });
@@ -971,6 +1105,13 @@ const HTML = `<!DOCTYPE html>
         span.textContent = info.name || id.slice(0, 5);
         peersList.appendChild(span);
       });
+      if (mismatchNote) {
+        const warn = document.createElement('span');
+        warn.className = 'peers-empty';
+        warn.style.color = '#fbbf24';
+        warn.textContent = mismatchNote;
+        peersList.appendChild(warn);
+      }
       if (peerMap.size === 0) {
         const none = document.createElement('span');
         none.className = 'peers-empty';
@@ -1020,6 +1161,8 @@ const HTML = `<!DOCTYPE html>
     }
 
     function stopTransmissionSilently() {
+      if (faxTxActive) { abortFax(); return; }
+      if (morseTxActive) { abortMorse(); return; }
       if (!isTransmitting) return;
       isTransmitting = false;
       if (localAudioTrack) localAudioTrack.enabled = false;
@@ -1031,6 +1174,8 @@ const HTML = `<!DOCTYPE html>
     }
 
     function stopTransmission() {
+      if (faxTxActive) { abortFax(); return; }
+      if (morseTxActive) { abortMorse(); return; }
       if (!isTransmitting) return;
       isTransmitting = false;
       if (localAudioTrack) localAudioTrack.enabled = false;
@@ -1122,6 +1267,11 @@ const HTML = `<!DOCTYPE html>
 
     window.addEventListener('keydown', function (e) {
       if (e.code !== 'Space') return;
+      if ((morsePlaying || morseQueue.length) && currentKey && !document.querySelector('dialog[open]') && !isTyping()) {
+        e.preventDefault();
+        if (!e.repeat) morseQueue.push(' ');
+        return;
+      }
       if (!spaceActive()) {
         // 部屋の外（ホーム画面など）でも、スペースキーでページがスクロールしないようにする。
         // 入力欄・ダイアログの中と、ボタンやチェックにフォーカスがあるときは、通常どおり。
@@ -1145,6 +1295,697 @@ const HTML = `<!DOCTYPE html>
     });
     window.addEventListener('blur', function () { if (spaceHeld) { spaceHeld = false; release(); } });
 
+    // ---------- モールス送信（PCのみ: 文字キーを打つと、その文字の符号をトーンで送る） ----------
+    const MORSE_CODE = {
+      A: '.-', B: '-...', C: '-.-.', D: '-..', E: '.', F: '..-.', G: '--.', H: '....', I: '..', J: '.---',
+      K: '-.-', L: '.-..', M: '--', N: '-.', O: '---', P: '.--.', Q: '--.-', R: '.-.', S: '...', T: '-',
+      U: '..-', V: '...-', W: '.--', X: '-..-', Y: '-.--', Z: '--..',
+      '1': '.----', '2': '..---', '3': '...--', '4': '....-', '5': '.....', '6': '-....', '7': '--...', '8': '---..', '9': '----.', '0': '-----',
+      '.': '.-.-.-', ',': '--..--', '?': '..--..', '!': '-.-.--', '/': '-..-.', '-': '-....-', ':': '---...', "'": '.----.', '"': '.-..-.', '(': '-.--.', ')': '-.--.-', '=': '-...-', '+': '.-.-.', '@': '.--.-.'
+    };
+    const MORSE_UNIT_MS = 100;
+    const morseQueue = [];
+    let morsePlaying = false, morseTxActive = false, morseSession = 0;
+
+    function morseSleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+    function morseKey(down) {
+      if (!morseGain) return;
+      const t = getAudioContext().currentTime;
+      morseGain.gain.cancelScheduledValues(t);
+      morseGain.gain.setTargetAtTime(down ? 0.35 : 0, t, 0.004);
+    }
+    function beginMorseTx() {
+      morseTxActive = true;
+      isTransmitting = true;
+      if (micSendGain) micSendGain.gain.value = 0;
+      if (localAudioTrack) localAudioTrack.enabled = true;
+      ledTx.classList.add('active');
+      statusLabel.textContent = 'TX (モールス送信中)';
+      statusLabel.style.color = 'var(--tx-color)';
+      renderPeers();
+      if (sendPttState) sendPttState({ isTalking: true });
+      announce();
+    }
+    function finishMorseTx() {
+      if (!morseTxActive) return;
+      morseTxActive = false;
+      morseKey(false);
+      if (micSendGain) micSendGain.gain.value = 1;
+      if (localAudioTrack) localAudioTrack.enabled = false;
+      isTransmitting = false;
+      ledTx.classList.remove('active');
+      const talker = currentTalkerId && peerMap.get(currentTalkerId);
+      if (talker) onStartReceiving(talker.name);
+      else { statusLabel.textContent = 'STANDBY'; statusLabel.style.color = '#38bdf8'; }
+      lcdSub.textContent = '';
+      renderPeers();
+      if (sendPttState) sendPttState({ isTalking: false });
+      announce();
+    }
+    function abortMorse() {
+      morseSession++;
+      morseQueue.length = 0;
+      morsePlaying = false;
+      finishMorseTx();
+    }
+    async function playMorseChar(ch, session, wideGap) {
+      const pat = MORSE_CODE[ch];
+      lcdSub.textContent = 'モールス: ' + ch + ' ' + pat.split('').map(function (s) { return s === '.' ? '・' : '−'; }).join('');
+      for (let i = 0; i < pat.length; i++) {
+        if (session !== morseSession) return false;
+        morseKey(true);
+        await morseSleep(pat[i] === '.' ? MORSE_UNIT_MS : MORSE_UNIT_MS * 3);
+        morseKey(false);
+        if (session !== morseSession) return false;
+        if (i < pat.length - 1) await morseSleep(MORSE_UNIT_MS * (wideGap ? 1.5 : 1)); // 先頭文字は隙間を広めに（受信側の立ち上がりで埋まらないように）
+      }
+      if (session !== morseSession) return false;
+      await morseSleep(MORSE_UNIT_MS);
+      return true;
+    }
+    async function startMorse() {
+      if (morsePlaying) return;
+      if (!room || isTransmitting) { morseQueue.length = 0; return; }
+      if (othersTalking() > 0) { playBusyTone(); flashSub('話中です'); morseQueue.length = 0; return; }
+      morsePlaying = true;
+      const ok = await initMicrophone();
+      if (!ok) { morsePlaying = false; morseQueue.length = 0; flashSub('マイクの許可が必要です'); return; }
+      if (!room || othersTalking() > 0) {
+        if (room && othersTalking() > 0) { playBusyTone(); flashSub('話中です'); }
+        morsePlaying = false; morseQueue.length = 0; return;
+      }
+      const session = ++morseSession;
+      let firstCh = true;
+      beginMorseTx();
+      await morseSleep(700); // 打ち始める前の間（受信側の復号リセットと回線の落ち着き待ち。最初の文字を拾わせるため長め）
+      while (morseQueue.length && session === morseSession) {
+        const ch = morseQueue.shift();
+        if (ch === ' ') { await morseSleep(MORSE_UNIT_MS * 6); continue; }
+        if (!await playMorseChar(ch, session, firstCh)) break;
+        firstCh = false;
+        if (morseQueue.length && session === morseSession) await morseSleep(MORSE_UNIT_MS * 2);
+      }
+      morsePlaying = false;
+      if (session === morseSession) finishMorseTx();
+    }
+    window.addEventListener('keydown', function (e) {
+      if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!currentKey || !room) return;
+      const rv = document.getElementById('radioView');
+      if (rv.classList.contains('hidden') || rv.classList.contains('flipped')) return;
+      if (document.querySelector('dialog[open]') || isTyping()) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (faxMode) exitFaxMode();
+        faxCanvas.classList.add('hidden'); // 紙も隠す
+        morseQueue.push('E', 'S', 'C'); // ESCを押したら、モールスでも「ESC」と送る
+        startMorse();
+        return;
+      }
+      // FAXモード（隠し）: 「fax」と打つと入る。ESCで解除
+      if (faxMode) {
+        if (faxTxActive) return;
+        if (e.key === 'Enter') { e.preventDefault(); if (faxText) startFaxTx(); return; }
+        if (e.key === 'Backspace') { e.preventDefault(); faxText = faxText.slice(0, -1); renderFaxCompose(); return; }
+        if (e.key && e.key.length === 1 && faxText.length < 24) { e.preventDefault(); faxText += e.key; renderFaxCompose(); }
+        return;
+      }
+      if (e.key && e.key.length === 1) {
+        faxProbe = (faxProbe + e.key.toLowerCase()).slice(-3);
+        if (faxProbe === 'fax') { faxProbe = ''; e.preventDefault(); enterFaxMode(); return; }
+      }
+      if (e.key === 'Backspace') {
+        if (morseQueue.length) { e.preventDefault(); morseQueue.pop(); }
+        return;
+      }
+      if (!e.key || e.key.length !== 1) return;
+      const ch = e.key.toUpperCase();
+      if (!Object.prototype.hasOwnProperty.call(MORSE_CODE, ch)) return;
+      e.preventDefault();
+      morseQueue.push(ch);
+      startMorse();
+    });
+
+    // ---------- モールス受信（700Hzトーンを検出して文字に戻す） ----------
+    const MORSE_REVERSE = {};
+    Object.keys(MORSE_CODE).forEach(function (k) { MORSE_REVERSE[MORSE_CODE[k]] = k; });
+    const rxDecoders = new Map(); // peerId -> 復号の状態
+    function resetRxDecode(peerId) {
+      const d = rxDecoders.get(peerId);
+      if (d) { d.pat = ''; d.text = ''; d.tone = false; d.hasPend = false; d.pendDur = 0; d.letterDone = false; d.wordDone = false; }
+    }
+    function morseDist1(a, b) { // 2つの符号が「1要素だけ違う」か
+      if (a === b) return false;
+      const la = a.length, lb = b.length;
+      if (Math.abs(la - lb) > 1) return false;
+      if (la === lb) {
+        let diff = 0;
+        for (let i = 0; i < la; i++) if (a[i] !== b[i]) diff++;
+        return diff === 1;
+      }
+      const s = la < lb ? a : b, l = la < lb ? b : a;
+      let i = 0, j = 0, skipped = false;
+      while (i < s.length && j < l.length) {
+        if (s[i] === l[j]) { i++; j++; }
+        else { if (skipped) return false; skipped = true; j++; }
+      }
+      return true;
+    }
+    function flushRxChar(d) {
+      if (!d.pat) return;
+      const hit = MORSE_REVERSE[d.pat];
+      if (hit) { d.text += hit; }
+      else {
+        // 完全一致が無くても、1要素違いの候補が1つだけなら推定して読む
+        let cand = null, ties = 0;
+        Object.keys(MORSE_REVERSE).forEach(function (p) {
+          if (morseDist1(d.pat, p)) { cand = MORSE_REVERSE[p]; ties++; }
+        });
+        if (ties === 1) d.text += /[A-Z]/.test(cand) ? cand.toLowerCase() : cand + '?'; // 推定は目印付き
+        else d.text += '[' + d.pat.split('').map(function (c) { return c === '.' ? '・' : '−'; }).join('') + ']'; // 読めなかった符号は測れた形のまま出す
+      }
+      d.text = d.text.slice(-60);
+      if (d.text.slice(-3) === 'ESC') faxCanvas.classList.add('hidden'); // 「ESC」を受けたら紙を隠す
+      d.pat = '';
+    }
+    function flushRxDecode(peerId) {
+      const d = rxDecoders.get(peerId);
+      if (!d || d.tone) return; // トーンの途中で確定すると末尾が欠けるので、終わってからだけ
+      finalizePend(peerId);
+      if (d.pat) { flushRxChar(d); renderRxDecode(peerId); }
+    }
+    function renderRxDecode(peerId) {
+      const d = rxDecoders.get(peerId);
+      if (!d) return;
+      let s = d.text;
+      let cur = d.pat;
+      if (d.hasPend) cur += d.pendDur < MORSE_UNIT_MS * 2 ? '.' : '-';
+      if (cur) s += (s ? ' ' : '') + cur.split('').map(function (c) { return c === '.' ? '・' : '−'; }).join('');
+      lcdSub.textContent = s.length > 38 ? s.slice(-38) : s; // 表題なし・長いときは最新だけ見せる
+    }
+    function finalizePend(peerId) {
+      const d = rxDecoders.get(peerId);
+      if (!d || !d.hasPend) return;
+      d.pat += d.pendDur < MORSE_UNIT_MS * 2 ? '.' : '-';
+      d.hasPend = false; d.pendDur = 0;
+      d.offAt = d.pendEnd;
+      renderRxDecode(peerId);
+    }
+    setInterval(function () { decodeMorseRx(); decodeFaxRx(); }, 15); // 描画と切り離して一定間隔で測る（先頭の符号を取りこぼさないため）
+    function decodeMorseRx() {
+      const now = performance.now();
+      rxDecoders.forEach(function (d, peerId) {
+        const an = d.an;
+        an.getByteFrequencyData(d.freq);
+        const binHz = an.context.sampleRate / an.fftSize;
+        const idx = Math.round(700 / binHz);
+        let peak = 0;
+        for (let i = idx - 2; i <= idx + 2; i++) { if (d.freq[i] > peak) peak = d.freq[i]; }
+        let sum = 0, cnt = 0;
+        for (let i = 2; i < d.freq.length; i++) { if (Math.abs(i - idx) > 3) { sum += d.freq[i]; cnt++; } }
+        const avg = cnt ? sum / cnt : 0;
+        // 肉声は帯域全体に散るのでモールスとして受け取らない（純音は700Hz帯に集中する）
+        function bandEnergy(fromHz, toHz) {
+          let e = 0;
+          const a = Math.max(1, Math.floor(fromHz / binHz)), b = Math.min(d.freq.length - 1, Math.ceil(toHz / binHz));
+          for (let i = a; i <= b; i++) { const db = -100 + (d.freq[i] / 255) * 70; const amp = Math.pow(10, db / 20); e += amp * amp; }
+          return e;
+        }
+        const eVoice = bandEnergy(100, 4000);
+        const pure = eVoice > 0 && bandEnergy(620, 780) / eVoice >= 0.55;
+        const floor = d.tone ? 70 : 100;
+        const isTone = peak >= floor && peak > avg * 3 && pure;
+        if (isTone) {
+          if (!d.tone) {
+            d.tone = true; d.toneAt = now;
+            if (d.hasPend && now - d.pendEnd >= 30) finalizePend(peerId); // 30ms以上あいたら前の符号は確定
+            // 次の符号の始まりで、前の文字との区切りを実測の無音長で確定する
+            if (!d.hasPend && d.offAt && (d.pat || d.letterDone) && !d.wordDone) {
+              const gap = now - d.offAt;
+              if (gap >= MORSE_UNIT_MS * 5) {
+                if (d.pat) flushRxChar(d);
+                d.text = (d.text + ' ').slice(-60);
+                renderRxDecode(peerId);
+              }
+              else if (d.pat && gap >= MORSE_UNIT_MS * 2 + 5) { flushRxChar(d); renderRxDecode(peerId); }
+            }
+            d.letterDone = false; d.wordDone = false;
+          }
+        } else {
+          if (d.tone) {
+            d.tone = false;
+            const seg = now - d.toneAt;
+            if (seg >= 35) { // 35ms未満のクリック等のノイズは捨てる
+              if (d.hasPend) d.pendDur += (d.toneAt - d.pendEnd) + seg; // 短い欠落はつないで1つの符号にする
+              else { d.pendDur = seg; d.hasPend = true; }
+              d.pendEnd = now;
+            }
+          }
+          if (d.hasPend && now - d.pendEnd >= 30) finalizePend(peerId);
+          if (!d.hasPend && (d.pat || (d.letterDone && !d.wordDone))) {
+            const silence = now - d.offAt;
+            if (silence >= MORSE_UNIT_MS * 5 && !d.wordDone) {
+              if (d.pat) flushRxChar(d);
+              d.text = (d.text + ' ').slice(-60);
+              d.wordDone = true; d.letterDone = true;
+              renderRxDecode(peerId);
+            } else if (d.pat && silence >= MORSE_UNIT_MS * 2 + 5 && !d.letterDone) {
+              flushRxChar(d);
+              d.letterDone = true;
+              renderRxDecode(peerId);
+            }
+          }
+        }
+      });
+    }
+
+
+    // ---------- FAXモード（隠し: 「fax」と打つと入る / ESCで解除） ----------
+    const FAX_ROWS = 15, FAX_COLS = 240, FAX_PX_MS = 20; // 紙は15行: 先頭の空行1 + 本文14行（1行分だけ）。画素は回線で潰れない太さに
+    const FAX_TEXT_ROWS = 14;
+    const FAX_FREQ = { pre: 1500, sync: 900, white: 1300, black: 2100 };
+    let faxMode = false, faxText = '', faxProbe = '';
+    let faxTxActive = false, faxPlaying = false, faxSession = 0;
+    const faxCanvas = document.getElementById('faxCanvas');
+    const faxCtx2d = faxCanvas.getContext('2d');
+    const faxImg = faxCtx2d.createImageData(FAX_COLS, FAX_ROWS);
+    function faxFillPaper() {
+      for (let i = 0; i < faxImg.data.length; i += 4) {
+        faxImg.data[i] = 248; faxImg.data[i + 1] = 248; faxImg.data[i + 2] = 240; faxImg.data[i + 3] = 255;
+      }
+      faxCtx2d.putImageData(faxImg, 0, 0);
+    }
+    function faxDrawPixel(x, y, black) {
+      if (x < 0 || x >= FAX_COLS || y < 0 || y >= FAX_ROWS) return;
+      const i = (y * FAX_COLS + x) * 4;
+      faxImg.data[i] = black ? 20 : 248;
+      faxImg.data[i + 1] = black ? 20 : 248;
+      faxImg.data[i + 2] = black ? 20 : 240;
+      faxImg.data[i + 3] = 255;
+    }
+    function renderFaxCompose() {
+      lcdSub.textContent = faxText ? faxText + '▌' : 'FAXモード: 文字を打って Enter で送信（ESCで終了）';
+    }
+    function enterFaxMode() {
+      abortMorse();
+      faxMode = true;
+      faxText = '';
+      faxCanvas.classList.remove('hidden');
+      faxFillPaper();
+      renderFaxCompose();
+    }
+    function exitFaxMode() {
+      if (faxTxActive) abortFax();
+      faxMode = false;
+      faxText = '';
+      flashSub('FAXモード終了');
+    }
+    function textToFaxGrid(text) {
+      const c = document.createElement('canvas');
+      const g = c.getContext('2d', { willReadFrequently: true });
+      const FS = 56; // 大きく描いてから縮小する（小さい字を直接潰すと線が欠けるので）
+      const H = 84; // 上下に余裕を持たせ、g のような下へ伸びる字も切らない
+      g.font = '700 ' + FS + 'px monospace';
+      const w = Math.max(1, Math.ceil(g.measureText(text).width)) + 4;
+      c.width = w; c.height = H;
+      g.font = '700 ' + FS + 'px monospace';
+      g.fillStyle = '#000';
+      g.textBaseline = 'alphabetic';
+      g.fillText(text, 2, FS);
+      const src = g.getImageData(0, 0, w, H).data;
+      // インクのある範囲を実測して、その範囲だけを14行に写す（字の位置決めをフォント任せにしない）
+      let minX = w, maxX = -1, minY = H, maxY = -1;
+      for (let y = 0; y < H; y++) for (let x = 0; x < w; x++) {
+        if (src[(y * w + x) * 4 + 3] > 40) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+      const grid = [];
+      if (maxX < 0) {
+        for (let y = 0; y < FAX_TEXT_ROWS; y++) grid.push([0]);
+        return grid;
+      }
+      const iw = maxX - minX + 1, ih = maxY - minY + 1;
+      const cols = Math.max(1, Math.min(FAX_COLS, Math.round(iw * FAX_TEXT_ROWS / ih)));
+      for (let y = 0; y < FAX_TEXT_ROWS; y++) {
+        const row = [];
+        const sy0 = minY + Math.floor(y * ih / FAX_TEXT_ROWS), sy1 = Math.min(maxY + 1, Math.max(sy0 + 1, minY + Math.floor((y + 1) * ih / FAX_TEXT_ROWS)));
+        for (let x = 0; x < cols; x++) {
+          const sx0 = minX + Math.floor(x * iw / cols), sx1 = Math.min(maxX + 1, Math.max(sx0 + 1, minX + Math.floor((x + 1) * iw / cols)));
+          let ink = 0, tot = 0;
+          for (let sy = sy0; sy < sy1; sy++) for (let sx = sx0; sx < sx1; sx++) {
+            if (src[(sy * w + sx) * 4 + 3] > 100) ink++;
+            tot++;
+          }
+          row.push(tot && ink / tot > 0.2 ? 1 : 0); // 細い線も残す（Macのフォントは線が細く、厳しく切ると欠ける）
+        }
+        grid.push(row);
+      }
+      return grid;
+    }
+    function faxTone(freq, ms) {
+      return new Promise(function (resolve) {
+        if (!faxOsc) { resolve(); return; }
+        const t = getAudioContext().currentTime;
+        faxOsc.frequency.cancelScheduledValues(t);
+        faxOsc.frequency.setTargetAtTime(freq, t, 0.002);
+        setTimeout(resolve, ms);
+      });
+    }
+    function beginFaxTx() {
+      faxTxActive = true;
+      isTransmitting = true;
+      if (micSendGain) micSendGain.gain.value = 0;
+      if (localAudioTrack) localAudioTrack.enabled = true;
+      if (faxGain) faxGain.gain.setTargetAtTime(0.2, getAudioContext().currentTime, 0.005);
+      ledTx.classList.add('active');
+      statusLabel.textContent = 'TX (FAX送信中)';
+      statusLabel.style.color = 'var(--tx-color)';
+      renderPeers();
+      if (sendPttState) sendPttState({ isTalking: true });
+      announce();
+    }
+    function finishFaxTx() {
+      if (faxGain) faxGain.gain.setTargetAtTime(0, getAudioContext().currentTime, 0.005);
+      faxTxActive = false;
+      isTransmitting = false;
+      if (micSendGain) micSendGain.gain.value = 1;
+      if (localAudioTrack) localAudioTrack.enabled = false;
+      ledTx.classList.remove('active');
+      statusLabel.textContent = 'STANDBY';
+      statusLabel.style.color = '';
+      renderPeers();
+      if (sendPttState) sendPttState({ isTalking: false });
+      announce();
+      if (faxMode) renderFaxCompose();
+    }
+    function abortFax() {
+      faxSession++;
+      faxPlaying = false;
+      if (faxTxActive) finishFaxTx();
+      if (faxGain) faxGain.gain.value = 0;
+    }
+    async function startFaxTx() {
+      if (faxPlaying || !faxText) return;
+      if (!room || isTransmitting) return;
+      if (othersTalking() > 0) { playBusyTone(); flashSub('話中です'); return; }
+      faxPlaying = true;
+      const ok = await initMicrophone();
+      if (!ok) { faxPlaying = false; flashSub('マイクの許可が必要です'); return; }
+      if (!room || othersTalking() > 0) { faxPlaying = false; return; }
+      const session = ++faxSession;
+      let grid;
+      try { grid = textToFaxGrid(faxText); } catch (_) { faxPlaying = false; flashSub('FAX化に失敗しました'); return; }
+      faxCanvas.classList.remove('hidden');
+      faxFillPaper();
+      beginFaxTx();
+      if (sendFaxPage) { try { sendFaxPage(faxGridToPayload(grid)); } catch (_) {} } // 中身はデータ便でも先に送る（表示は音に合わせて後から）
+      await morseSleep(500);
+      if (session !== faxSession) { faxPlaying = false; return; }
+      await faxTone(FAX_FREQ.pre, 700); // ピー（受信開始の合図）: 受信側が確実に拾えるよう長めに
+      async function sendFaxRow(rowArr, cols, yAbs) {
+        if (session !== faxSession) return;
+        await faxTone(FAX_FREQ.sync, 150);
+        let hasBlack = false;
+        if (rowArr) for (let i = 0; i < cols; i++) if (rowArr[i]) { hasBlack = true; break; }
+        if (!hasBlack) { await faxTone(FAX_FREQ.white, 80); return; } // 空行は短く送る（中身が無いので時間は要らない）
+        let x = 0;
+        while (x < cols && session === faxSession) {
+          let x2 = x + 1;
+          while (x2 < cols && rowArr[x2] === rowArr[x]) x2++;
+          await faxTone(rowArr[x] ? FAX_FREQ.black : FAX_FREQ.white, (x2 - x) * FAX_PX_MS);
+          for (let px = x; px < x2; px++) faxDrawPixel(px, yAbs, !!rowArr[px]);
+          faxCtx2d.putImageData(faxImg, 0, 0);
+          x = x2;
+        }
+      }
+      await sendFaxRow(null, 0, 0); // 先頭の空行（余白）
+      for (let y = 0; y < FAX_TEXT_ROWS && session === faxSession; y++) {
+        await sendFaxRow(grid[y], grid[0].length, 1 + y);
+      }
+      faxPlaying = false;
+      if (session === faxSession) { await morseSleep(150); finishFaxTx(); }
+    }
+    // ---------- FAX受信 ----------
+    const faxDecoders = new Map();
+    function faxBandEnergy(srcD, freq) {
+      const binHz = srcD.an.context.sampleRate / srcD.an.fftSize;
+      const idx = Math.round(freq / binHz);
+      let e = 0;
+      for (let i = idx - 1; i <= idx + 1; i++) {
+        if (i < 0 || i >= srcD.freq.length) continue;
+        const db = -100 + (srcD.freq[i] / 255) * 70;
+        const amp = Math.pow(10, db / 20);
+        e += amp * amp;
+      }
+      return e;
+    }
+    function decodeFaxRx() {
+      const now = performance.now();
+      rxDecoders.forEach(function (srcD, peerId) {
+        let d = faxDecoders.get(peerId);
+        if (!d) { d = { state: 'idle', preCount: 0, row: 0, lastX: -1, lastAct: 0, rowStart: 0, syncStart: 0 }; faxDecoders.set(peerId, d); }
+        srcD.an.getByteFrequencyData(srcD.freq);
+        const ePre = faxBandEnergy(srcD, FAX_FREQ.pre), eSync = faxBandEnergy(srcD, FAX_FREQ.sync);
+        const eW = faxBandEnergy(srcD, FAX_FREQ.white), eB = faxBandEnergy(srcD, FAX_FREQ.black);
+        const total = ePre + eSync + eW + eB;
+        let kind = '';
+        if (total > 0.000001) {
+          const m = Math.max(ePre, eSync, eW, eB);
+          if (m / total >= 0.5) kind = m === ePre ? 'pre' : m === eSync ? 'sync' : m === eW ? 'white' : 'black';
+        }
+        if (d.state === 'idle') {
+          if (kind === 'pre') {
+            if (++d.preCount >= 8) {
+              d.state = 'armed'; d.row = 0; d.lastAct = now;
+              const dig = faxDigital.get(peerId);
+              if (dig && !dig.started) startFaxReveal(peerId, 500); // デジタル便が来ていれば、音に合わせて表示開始
+              else if (!dig) { faxCanvas.classList.remove('hidden'); faxFillPaper(); }
+            }
+          } else d.preCount = 0;
+          return;
+        }
+        if (kind) d.lastAct = now;
+        if (now - d.lastAct > 900) { d.state = 'idle'; d.preCount = 0; return; }
+        if (d.state === 'armed') {
+          if (kind === 'sync') { d.state = 'insync'; d.syncStart = now; }
+        } else if (d.state === 'insync') {
+          if (kind !== 'sync') { d.state = 'row'; d.rowStart = now; d.lastX = -1; } // 同期の終わりを実測して行の起点にする
+          else if (now - d.syncStart > 320) { d.state = 'row'; d.rowStart = now; d.lastX = -1; }
+        } else if (d.state === 'row') {
+          if (kind === 'sync' && now - d.rowStart > 60) {
+            d.row++;
+            if (d.row >= FAX_ROWS) { d.state = 'idle'; d.preCount = 0; return; }
+            d.state = 'insync'; d.syncStart = now;
+          } else if (kind === 'white' || kind === 'black') {
+            const dig2 = faxDigital.get(peerId);
+            if (dig2 && dig2.started) return; // デジタル表示中はアナログで上書きしない
+            const x = Math.floor((now - d.rowStart) / FAX_PX_MS);
+            const from = d.lastX < 0 ? 0 : d.lastX + 1;
+            const to = Math.min(x, FAX_COLS - 1);
+            for (let px = from; px <= to; px++) faxDrawPixel(px, d.row, kind === 'black');
+            if (x !== d.lastX) { faxCtx2d.putImageData(faxImg, 0, 0); d.lastX = x; }
+          }
+        }
+      });
+    }
+
+
+    // ---------- FAXデジタル便（中身はデータで確実に届け、見せ方は音のFAXのまま） ----------
+    const faxDigital = new Map(); // peerId -> { grid, timers, started }
+    function faxGridToPayload(grid) {
+      const cols = grid[0].length;
+      let bin = '';
+      for (let y = 0; y < grid.length; y++) {
+        for (let b = 0; b < Math.ceil(cols / 8); b++) {
+          let v = 0;
+          for (let bit = 0; bit < 8; bit++) {
+            const x = b * 8 + bit;
+            if (x < cols && grid[y][x]) v |= (1 << (7 - bit));
+          }
+          bin += String.fromCharCode(v);
+        }
+      }
+      return { c: cols, d: btoa(bin) };
+    }
+    function faxPayloadToGrid(p) {
+      if (!p || typeof p.c !== 'number' || typeof p.d !== 'string') return null;
+      const cols = Math.max(1, Math.min(FAX_COLS, p.c));
+      let bin;
+      try { bin = atob(p.d); } catch (_) { return null; }
+      const bpr = Math.ceil(cols / 8);
+      if (bin.length < bpr * FAX_TEXT_ROWS) return null;
+      const grid = [];
+      for (let y = 0; y < FAX_TEXT_ROWS; y++) {
+        const row = [];
+        for (let x = 0; x < cols; x++) {
+          row.push((bin.charCodeAt(y * bpr + Math.floor(x / 8)) >> (7 - (x % 8))) & 1);
+        }
+        grid.push(row);
+      }
+      return grid;
+    }
+    function cancelFaxReveal(peerId) {
+      const st = faxDigital.get(peerId);
+      if (st) st.timers.forEach(function (t) { clearTimeout(t); });
+      faxDigital.delete(peerId);
+    }
+    function startFaxReveal(peerId, delayMs) {
+      const st = faxDigital.get(peerId);
+      if (!st || st.started) return;
+      st.started = true;
+      faxCanvas.classList.remove('hidden');
+      faxFillPaper();
+      // 送信側と同じ進行表で1行ずつ出す: 空行（同期+短い白）→ 本文行（同期+幅ぶん）。真っ白な行は速い
+      const cols = st.grid[0].length;
+      let at = delayMs || 0;
+      function scheduleRow(rowArr, yAbs, dur) {
+        const t = setTimeout(function () {
+          if (faxDigital.get(peerId) !== st) return;
+          if (rowArr) for (let x = 0; x < cols; x++) faxDrawPixel(x, yAbs, !!rowArr[x]);
+          faxCtx2d.putImageData(faxImg, 0, 0);
+        }, at);
+        st.timers.push(t);
+        at += dur;
+      }
+      scheduleRow(null, 0, 150 + 80);
+      for (let y = 0; y < FAX_TEXT_ROWS; y++) {
+        const rowArr = st.grid[y];
+        const blank = !rowArr.some(function (v) { return v; });
+        scheduleRow(rowArr, 1 + y, blank ? 150 + 80 : 150 + cols * FAX_PX_MS);
+      }
+      const done = setTimeout(function () { if (faxDigital.get(peerId) === st) faxDigital.delete(peerId); }, at + 4000);
+      st.timers.push(done);
+    }
+    function onFaxPage(data, peerId) {
+      if (POCHI_NATIVE && data) { try { window.webkit.messageHandlers.pochi.postMessage({ type: 'fax', peerId: peerId, c: data.c, d: data.d }); } catch (_) {} }
+      const grid = faxPayloadToGrid(data);
+      if (!grid) return;
+      cancelFaxReveal(peerId);
+      const st = { grid: grid, timers: [], started: false };
+      faxDigital.set(peerId, st);
+      // 音の合図（ピー）が聞こえればそちらで開始。聞こえなくても少し待って開始する
+      st.timers.push(setTimeout(function () { startFaxReveal(peerId, 0); }, 1500));
+    }
+
+
+    // ---------- ネイティブアプリ連携ブリッジ（?native=1 のときだけ有効） ----------
+    const POCHI_NATIVE = new URLSearchParams(location.search).has('native');
+    if (POCHI_NATIVE) {
+      try { if (welcomeDialog.open) welcomeDialog.close(); } catch (_) {}
+      const pochiPost = function (obj) {
+        try { window.webkit.messageHandlers.pochi.postMessage(obj); } catch (_) {}
+      };
+      const pochiLevelOf = function (an) {
+        if (!an) return 0;
+        const buf = new Uint8Array(an.fftSize);
+        an.getByteTimeDomainData(buf);
+        let peak = 0;
+        for (let i = 0; i < buf.length; i++) { const d = Math.abs(buf[i] - 128) / 128; if (d > peak) peak = d; }
+        return Math.round(peak * 1000) / 1000;
+      };
+      const pochiSnapshot = function () {
+        const rooms = [];
+        roomStats().forEach(function (st, key) {
+          rooms.push({ key: key, hash: fmt(key), count: st.count, air: !!st.air, names: st.names, tag: st.tag || '', tagBy: st.tagBy || '' });
+        });
+        rooms.sort(function (a, b) { return a.key < b.key ? -1 : 1; });
+        const peers = [];
+        if (currentKey) {
+          peers.push({ id: 'me', name: myNickname, me: true, talking: !!isTransmitting });
+          peerMap.forEach(function (p, id) { peers.push({ id: id, name: p.name || '相手', me: false, talking: !!p.isTalking }); });
+        }
+        let morse = '';
+        rxDecoders.forEach(function (d) { if (d.text) morse = d.text; });
+        return {
+          type: 'state', name: myNickname,
+          inRoom: !!currentKey, roomKey: currentKey || '', roomHash: currentKey ? fmt(currentKey) : '',
+          tag: roomMeta.tag || '', tagBy: roomMeta.by || '',
+          peers: peers, rooms: rooms,
+          meTalking: !!isTransmitting, talkerId: currentTalkerId || '',
+          morseRx: morse, faxMode: !!faxMode,
+          settings: { inputDb: inputDb, vox: !!voxCheck.checked, voxSens: parseInt(voxSens.value, 10) || 5, sfxVol: Math.round(sfxVol * 100), speakerMuted: !!speakerMuted }
+        };
+      };
+      let pochiLastJSON = '';
+      setInterval(function () {
+        const s = pochiSnapshot();
+        const j = JSON.stringify(s);
+        if (j !== pochiLastJSON) { pochiLastJSON = j; pochiPost(s); }
+      }, 400);
+      setInterval(function () {
+        if (!currentKey) return;
+        let rx = 0;
+        const an = currentTalkerId ? rxAnalysers.get(currentTalkerId) : null;
+        if (an) rx = pochiLevelOf(an);
+        pochiPost({ type: 'level', tx: pochiLevelOf(txAnalyser), rx: rx });
+      }, 150);
+      window.__pochiCmd = function (json) {
+        let cmd = null;
+        try { cmd = JSON.parse(json); } catch (_) { return; }
+        if (!cmd || !cmd.cmd) return;
+        try {
+          if (cmd.cmd === 'join' && cmd.name) hashOf(String(cmd.name)).then(function (k) { tuneKey(k); });
+          else if (cmd.cmd === 'joinKey' && cmd.key) tuneKey(String(cmd.key).toLowerCase());
+          else if (cmd.cmd === 'leave') leaveRoom();
+          else if (cmd.cmd === 'reconnect') reconnectRoom(false);
+          else if (cmd.cmd === 'pttDown') press();
+          else if (cmd.cmd === 'pttUp') release();
+          else if (cmd.cmd === 'setName') {
+            const v = String(cmd.name || '').trim().slice(0, 20) || 'NoName';
+            myNickname = v;
+            nameInput.value = v;
+            try { localStorage.setItem('pochitalk_ptt_name', v); } catch (_) {}
+            if (sendNickname) sendNickname(v);
+            announce();
+          }
+          else if (cmd.cmd === 'setTag') setTag(String(cmd.tag || ''));
+          else if (cmd.cmd === 'morse') {
+            const text = String(cmd.text || '').toUpperCase();
+            for (let i = 0; i < text.length; i++) {
+              const ch = text[i];
+              if (ch === ' ') { if (morsePlaying || morseQueue.length) morseQueue.push(' '); }
+              else if (Object.prototype.hasOwnProperty.call(MORSE_CODE, ch)) morseQueue.push(ch);
+            }
+            startMorse();
+          }
+          else if (cmd.cmd === 'esc') {
+            if (faxMode) exitFaxMode();
+            faxCanvas.classList.add('hidden');
+            morseQueue.push('E', 'S', 'C');
+            startMorse();
+          }
+          else if (cmd.cmd === 'fax') { faxText = String(cmd.text || '').slice(0, 24); if (faxText) startFaxTx(); }
+          else if (cmd.cmd === 'settings') {
+            const s = cmd.settings || {};
+            if (typeof s.inputDb === 'number') setInputDb(s.inputDb, true);
+            if (typeof s.voxSens === 'number') {
+              voxSens.value = String(Math.min(10, Math.max(1, s.voxSens)));
+              updateVoxThrMarker();
+              try { localStorage.setItem('pochitalk_vox_thr', voxSens.value); } catch (_) {}
+            }
+            if (typeof s.vox === 'boolean') {
+              if (s.vox && !voxCheck.checked) { setVoxUI(true); startVox(); }
+              else if (!s.vox && voxCheck.checked) { setVoxUI(false); stopVox(); }
+            }
+            if (typeof s.sfxVol === 'number') {
+              sfxVol = Math.min(1.5, Math.max(0, s.sfxVol / 100));
+              if (sfxGainNode) sfxGainNode.gain.value = speakerMuted ? 0 : sfxVol;
+              try { localStorage.setItem('pochitalk_sfx_vol', String(Math.round(sfxVol * 100))); } catch (_) {}
+            }
+            if (typeof s.speakerMuted === 'boolean') { speakerMuted = s.speakerMuted; applySpeakerMute(); }
+          }
+          else if (cmd.cmd === 'ping') { pochiLastJSON = ''; }
+        } catch (_) {}
+      };
+      pochiPost({ type: 'ready' });
+    }
+
+
+
     // ---------- 部屋(ハッシュ周波数)操作 ----------
     let pendingKey = null; // 招待URLで指定された部屋（まだ入室していない）
     function renderFreq(key) {
@@ -1164,7 +2005,7 @@ const HTML = `<!DOCTYPE html>
       if (voxCheck.checked) { setVoxUI(false); stopVox(); }
       if (room) { room.leave(); room = null; }
       releaseMic();
-      sendPttState = null; sendNickname = null; sendJoinAge = null; sendTag = null;
+      sendPttState = null; sendNickname = null; sendJoinAge = null; sendTag = null; sendFaxPage = null;
       peerMap.clear();
       currentTalkerId = null;
       document.querySelectorAll('audio[id^="audio-"]').forEach(function (a) { a.remove(); });
@@ -1186,6 +2027,10 @@ const HTML = `<!DOCTYPE html>
 
     function tuneKey(key) {
       if (isTransmitting) { flashSub('送信中は周波数を変えられません'); return; }
+      if (key !== currentKey) {
+        const st0 = roomStats().get(key);
+        if (st0 && st0.count >= MAX_ROOM) { toast('この部屋は満員です（' + MAX_ROOM + '人まで）'); return; }
+      }
       if (key === currentKey) { renderFreq(key); flashSub('すでにこの周波数です'); return; }
       currentKey = key;
       pendingKey = null;
@@ -1209,35 +2054,169 @@ const HTML = `<!DOCTYPE html>
     }
 
     // ---------- ロビー: 各部屋の在室状況を共有 ----------
-    const lobbyEntries = new Map(); // peerId -> { ch(key), talking, ts }
-    let sendPresence = null, lobbyRoom = null;
+    // 部屋の一覧は、WebRTC（アプリを開いている全員と接続）ではなく、Nostr のリレーに、在室の知らせを直接送って共有する。
+    // 全員とつなぐ方式は、人が増えたり、TURN 中継固定だったりすると、接続の準備が溜まって、一覧が共有されなくなるため。
+    // ---------- 部屋の人数の上限（1つの部屋は8人まで）----------
+    // 通話は、全員が全員と直接つながる方式なので、人数が増えると、各端末の負荷が急に重くなる。そのため、上限を設ける。
+    // ・入る前: 一覧の人数が上限なら、入れない
+    // ・入ったあと（同時に入って超えたとき）: 入室が新しい人から、上限を超えた分が、自分で退出する（古い人は、追い出されない）
+    const MAX_ROOM = 8;
+    let toastTimer = null;
+    function toast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.remove('hidden');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { el.classList.add('hidden'); }, 3500);
+    }
+    function checkRoomFull() {
+      if (!currentKey || !room) return;
+      if (peerMap.size + 1 <= MAX_ROOM) return;
+      const members = [{ id: 'me', t: roomEnterTime }];
+      peerMap.forEach(function (p, id) { members.push({ id: id, t: p.enteredAt || 0 }); }); // 入室時刻が分からない相手（古い版など）は、古株として扱う
+      members.sort(function (a, b) { return a.t - b.t || (a.id < b.id ? -1 : 1); });
+      const myRank = members.findIndex(function (m) { return m.id === 'me'; });
+      if (myRank < MAX_ROOM) return; // 古い順に8人までは、残る
+      leaveRoom();
+      toast('この部屋は満員のため、退出しました（' + MAX_ROOM + '人まで）');
+    }
+    setInterval(checkRoomFull, 5000);
 
-    function announce(peerId) {
-      if (!sendPresence || !currentKey) return;
-      const msg = { ch: currentKey, talking: isTransmitting, name: myNickname, tag: roomMeta.tag, by: roomMeta.by, at: roomMeta.at };
-      if (peerId) sendPresence(msg, peerId); else sendPresence(msg);
+    // ---------- 一覧の人数と、実際につながっている人数が合わないとき ----------
+    // 在室通知（リレー経由）と、通話の接続（WebRTC）は、別々の仕組みなので、通知だけ先に見えて、接続がまだ、または失敗していることがある。
+    // 10秒以上ずれたら、画面に知らせ、25秒以上ずれたら、自動でつなぎ直す（つなぎ直しは、90秒に1回まで）
+    let mismatchNote = '', mismatchSince = 0, mismatchKey = '', lastAutoReconnect = 0;
+    function checkMismatch() {
+      if (!currentKey || !room) { mismatchSince = 0; mismatchKey = ''; if (mismatchNote) { mismatchNote = ''; renderPeers(); } return; }
+      if (mismatchKey !== currentKey) { mismatchKey = currentKey; mismatchSince = 0; }
+      let expected = 0;
+      lobbyEntries.forEach(function (v) { if (v.ch === currentKey) expected++; });
+      const connected = peerMap.size;
+      if (expected <= connected) {
+        mismatchSince = 0;
+        if (mismatchNote) { mismatchNote = ''; renderPeers(); }
+        return;
+      }
+      if (!mismatchSince) mismatchSince = Date.now();
+      const dur = Date.now() - mismatchSince;
+      if (dur > 10000) {
+        const note = 'ほかに ' + (expected - connected) + ' 人が在室していますが、まだつながっていません（つなぎ直しています）';
+        if (note !== mismatchNote) { mismatchNote = note; renderPeers(); }
+      }
+      if (dur > 25000 && Date.now() - lastAutoReconnect > 90000 && !reconnecting) {
+        lastAutoReconnect = Date.now();
+        mismatchSince = Date.now();
+        reconnectRoom(true);
+      }
+    }
+    setInterval(checkMismatch, 3000);
+
+    const lobbyEntries = new Map(); // 送り主の公開鍵 -> { ch(key), talking, name, tag, by, at, ts }
+    const PRESENCE_KIND = 29334, PRESENCE_TOPIC = 'pochitalk-presence-v1', PRESENCE_BEAT_MS = 6000, PRESENCE_EXPIRE_MS = 20000;
+    let sendPresence = null, lobbyRoom = null; // 旧方式の名前（ほかの場所から参照されるので残してある。使わない）
+    const pres = { schnorr: null, priv: null, pub: '', socks: new Map(), retry: new Map(), seen: new Map(), started: false, timer: null, lastSent: 0, pending: null, announced: false };
+
+    async function presenceInit() {
+      if (pres.schnorr) return true;
+      try {
+        const mod = await import('https://esm.sh/@noble/curves@1.4.0/secp256k1');
+        pres.schnorr = mod.schnorr;
+        pres.priv = pres.schnorr.utils.randomPrivateKey();
+        pres.pub = toHex(pres.schnorr.getPublicKey(pres.priv));
+        return true;
+      } catch (_) { return false; }
     }
 
-    let lobbyTimer = null;
-    function joinLobby() {
-      clearInterval(lobbyTimer);
-      lobbyRoom = joinRoom({ appId: 'pochitalk-walkie-talkie-cf-worker' }, 'pochitalk-lobby');
-      const act = lobbyRoom.makeAction('presence');
-      sendPresence = act[0];
-      act[1](function (data, peerId) {
-        if (!data || typeof data.ch !== 'string' || !isKey(data.ch)) return;
-        lobbyEntries.set(peerId, { ch: data.ch, talking: !!data.talking, name: String(data.name || '?').slice(0, 12), tag: capTag(data.tag), by: String(data.by || '').slice(0, 12), at: typeof data.at === 'number' ? data.at : 0, ts: Date.now() });
-        renderScan();
-      });
-      lobbyRoom.onPeerJoin(function (peerId) { announce(peerId); });
-      lobbyRoom.onPeerLeave(function (peerId) { lobbyEntries.delete(peerId); renderScan(); });
-      lobbyTimer = setInterval(function () {
-        const now = Date.now();
-        lobbyEntries.forEach(function (v, k) { if (now - v.ts > 15000) lobbyEntries.delete(k); });
+    async function presenceEvent(obj) {
+      const tags = [['x', PRESENCE_TOPIC]];
+      const created = Math.floor(Date.now() / 1000);
+      const content = JSON.stringify(obj);
+      const ser = JSON.stringify([0, pres.pub, created, PRESENCE_KIND, tags, content]);
+      const idBuf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ser));
+      const id = toHex(new Uint8Array(idBuf));
+      const sig = toHex(await pres.schnorr.sign(id, pres.priv));
+      return JSON.stringify(['EVENT', { id: id, pubkey: pres.pub, created_at: created, kind: PRESENCE_KIND, tags: tags, content: content, sig: sig }]);
+    }
+
+    async function presenceSend(obj) {
+      if (!(await presenceInit())) return;
+      const ev = await presenceEvent(obj);
+      pres.socks.forEach(function (ws) { if (ws.readyState === 1) { try { ws.send(ev); } catch (_) {} } });
+    }
+
+    // 自分の在室を知らせる。連続して呼ばれても、1秒に1回にまとめる。部屋にいないときは何も送らない（出たときだけ、1回「いない」と送る）
+    function announce() {
+      if (!pres.started) return;
+      const gap = Date.now() - pres.lastSent;
+      if (gap < 1000) {
+        if (!pres.pending) pres.pending = setTimeout(function () { pres.pending = null; announce(); }, 1000 - gap);
+        return;
+      }
+      if (!currentKey) {
+        if (!pres.announced) return;
+        pres.announced = false; pres.lastSent = Date.now();
+        presenceSend({ ch: '' });
+        return;
+      }
+      pres.announced = true; pres.lastSent = Date.now();
+      presenceSend({ ch: currentKey, talking: isTransmitting, name: myNickname, tag: roomMeta.tag, by: roomMeta.by, at: roomMeta.at });
+    }
+    function announceSoon() { setTimeout(announce, 300 + Math.random() * 1200); }
+
+    function presenceOnMessage(data) {
+      let m; try { m = JSON.parse(data); } catch (_) { return; }
+      if (!Array.isArray(m) || m[0] !== 'EVENT' || !m[2]) return;
+      const ev = m[2];
+      if (!ev || ev.kind !== PRESENCE_KIND || !ev.pubkey || ev.pubkey === pres.pub) return;
+      if (pres.seen.has(ev.id)) return; // 複数のリレーから、同じ知らせが届く
+      pres.seen.set(ev.id, Date.now());
+      if (typeof ev.created_at === 'number' && ev.created_at < Date.now() / 1000 - 120) return;
+      let d; try { d = JSON.parse(ev.content); } catch (_) { return; }
+      if (!d || typeof d.ch !== 'string') return;
+      if (d.ch === '') { if (lobbyEntries.delete(ev.pubkey)) renderScan(); return; }
+      if (!isKey(d.ch)) return;
+      const isNew = !lobbyEntries.has(ev.pubkey);
+      lobbyEntries.set(ev.pubkey, { ch: d.ch, talking: !!d.talking, name: String(d.name || '?').slice(0, 12), tag: capTag(d.tag), by: String(d.by || '').slice(0, 12), at: typeof d.at === 'number' ? d.at : 0, ts: Date.now() });
+      if (isNew) announceSoon(); // 新しく来た人に、こちらの在室を、すぐ知らせる
+      renderScan();
+    }
+
+    function presenceOpen(url) {
+      if (!pres.started || pres.socks.has(url)) return;
+      let ws; try { ws = new WebSocket(url); } catch (_) { return; }
+      pres.socks.set(url, ws);
+      ws.onopen = function () {
+        pres.retry.set(url, 5000);
+        try { ws.send(JSON.stringify(['REQ', 'pochi-presence', { kinds: [PRESENCE_KIND], '#x': [PRESENCE_TOPIC], since: Math.floor(Date.now() / 1000) - 5 }])); } catch (_) {}
         announce();
-        renderScan();
-      }, 4000);
+      };
+      ws.onmessage = function (e) { presenceOnMessage(e.data); };
+      ws.onclose = function () {
+        pres.socks.delete(url);
+        if (!pres.started) return;
+        const wait = Math.min(pres.retry.get(url) || 5000, 300000); // 落ちているリレーは、間隔を倍にしながら、再試行する
+        pres.retry.set(url, wait * 2);
+        setTimeout(function () { presenceOpen(url); }, wait);
+      };
     }
+
+    function joinLobby() {
+      pres.started = true;
+      presenceInit().then(function (ok) {
+        if (!ok) return;
+        aliveRelays.forEach(presenceOpen);
+        if (pres.timer) return;
+        pres.timer = setInterval(function () {
+          const now = Date.now();
+          lobbyEntries.forEach(function (v, k) { if (now - v.ts > PRESENCE_EXPIRE_MS) lobbyEntries.delete(k); });
+          pres.seen.forEach(function (t, k) { if (now - t > 120000) pres.seen.delete(k); });
+          announce();
+          renderScan();
+        }, PRESENCE_BEAT_MS);
+      });
+    }
+    // 回線が戻ったら、すぐにつなぎ直す
+    window.addEventListener('online', function () { pres.retry.clear(); aliveRelays.forEach(presenceOpen); });
 
     function roomStats() {
       const stats = new Map();
@@ -1335,7 +2314,10 @@ const HTML = `<!DOCTYPE html>
       document.getElementById('inviteHash').textContent = fmt(pendingKey);
       const info = document.getElementById('inviteInfo');
       if (st && st.count > 0) {
-        info.textContent = '👤 ' + st.count + '人：' + st.names.join('、') + (st.tag ? '　🏷 ' + st.tag : '');
+        info.textContent = '';
+        info.appendChild(document.createTextNode('👤 ' + st.count + '人：'));
+        appendNames(info, st.names);
+        if (st.tag) info.appendChild(document.createTextNode('　🏷 ' + st.tag));
       } else {
         info.textContent = 'いまは誰もいません。入って待つこともできます。';
       }
@@ -1347,6 +2329,16 @@ const HTML = `<!DOCTYPE html>
       renderScan();
     });
     document.getElementById('inviteAbout').addEventListener('click', function () { openDialog(aboutDialog); });
+
+    function appendNames(el, names) { // 名前を1人ずつ割れない要素で並べる（改行は「、」の後だけ）
+      names.forEach(function (nm, i) {
+        if (i) el.appendChild(document.createTextNode('、'));
+        const ns = document.createElement('span');
+        ns.className = 'chip-name';
+        ns.textContent = nm;
+        el.appendChild(ns);
+      });
+    }
 
     function renderScan() {
       const stats = roomStats();
@@ -1376,15 +2368,17 @@ const HTML = `<!DOCTYPE html>
         const st = stats.get(key);
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'chan-chip' + (key === currentKey ? ' me' : '') + (st.air ? ' air' : '') + (key === pendingKey ? ' invited' : '');
+        b.className = 'chan-chip' + (key === currentKey ? ' me' : '') + (st.air ? ' air' : '') + (key === pendingKey ? ' invited' : '') + (st.count >= MAX_ROOM && key !== currentKey ? ' full' : '');
         const head = document.createElement('div');
-        head.textContent = (st.air ? '🔴 ' : '🔵 ') + fmt(key) + ' · 👤' + st.count + (key === pendingKey ? ' · 招待' : '');
+        head.textContent = (st.air ? '🔴 ' : '🔵 ') + fmt(key) + ' · 👤' + st.count + (key === currentKey && st.count !== peerMap.size + 1 ? '（つながっているのは ' + (peerMap.size + 1) + ' 人）' : '') + (st.count >= MAX_ROOM ? ' · 満員' : '') + (key === pendingKey ? ' · 招待' : '');
         const tg = document.createElement('div');
         tg.className = 'chip-tag';
         if (st.tag) { tg.textContent = '🏷 ' + st.tag + (st.tagBy ? '（' + st.tagBy + '）' : ''); }
         const who = document.createElement('div');
         who.className = 'chip-who';
-        who.textContent = st.invited ? '招待された部屋（現在は無人）' : st.empty ? 'この部屋には、いま誰もいません（タップで入る）' : st.names.join('、');
+        if (st.invited) who.textContent = '招待された部屋（現在は無人）';
+        else if (st.empty) who.textContent = 'この部屋には、いま誰もいません（タップで入る）';
+        else appendNames(who, st.names);
         b.appendChild(head); if (st.tag) b.appendChild(tg); b.appendChild(who);
         b.addEventListener('click', function () { tuneKey(key); });
         scanList.appendChild(b);
@@ -1399,6 +2393,7 @@ const HTML = `<!DOCTYPE html>
       reconnecting = true;
       const btn = document.getElementById('reconnectBtn');
       btn.disabled = true;
+      await refreshIceServers(true); // つなぎ直しでは資格情報を取り直してから入る
       try {
         if (isTransmitting) { pressed = false; stopTransmission(); }
         flashSub(auto ? '接続が切れた可能性があるので、つなぎ直しています…' : '再接続中…');
@@ -1406,8 +2401,8 @@ const HTML = `<!DOCTYPE html>
         const oldRoom = room, oldLobby = lobbyRoom;
         // 古い接続を片付ける（マイクと、部屋に入っている状態はそのまま）
         room = null; lobbyRoom = null;
-        sendPttState = null; sendNickname = null; sendJoinAge = null; sendTag = null; sendPresence = null;
-        peerMap.clear(); rxAnalysers.clear(); lobbyEntries.clear();
+        sendPttState = null; sendNickname = null; sendJoinAge = null; sendTag = null; sendPresence = null; sendFaxPage = null;
+        peerMap.clear(); rxAnalysers.clear(); rxDecoders.clear(); lobbyEntries.clear();
         currentTalkerId = null;
         document.querySelectorAll('audio[id^="audio-"]').forEach(function (a) { a.remove(); });
         ledRx.classList.remove('active');
@@ -1777,6 +2772,7 @@ const HTML = `<!DOCTYPE html>
     leftyCheck.addEventListener('change', function () { setLefty(leftyCheck.checked, true); });
 
     // ---------- 効果音の音量 ----------
+    document.getElementById('testRoomBtn').addEventListener('click', function () { closeSettings(); tuneKey('7a0b07c1'); });
     const sfxVolEl = document.getElementById('sfxVol'), sfxVolVal = document.getElementById('sfxVolVal');
     function setSfxVol(v, save) {
       const n = Math.min(150, Math.max(0, parseInt(v, 10)));
@@ -1844,6 +2840,8 @@ const HTML = `<!DOCTYPE html>
       const p = (urlParams.get('r') || '').trim().toLowerCase();
       pendingKey = isKey(p) ? p : null;
       renderFreq(null);
+      await refreshIceServers();
+      setInterval(function () { refreshIceServers(false); }, 5 * 60 * 1000); // 通話中も資格情報を新しく保つ
       joinLobby();
       renderScan();
     })();
@@ -1865,9 +2863,460 @@ function bytes(b64) {
 }
 const CACHE = 'public, max-age=86400';
 
+// ---- 版の表示（画面の下、設定、ボット、/version は、すべてこの1か所から出す）。更新のたびに、ここを変える ----
+const APP_VERSION = '2026-11-08-b（Trystero 0.25.4）';
+// ---- Trystero 0.25.4（MIT License, (c) Dan Motzenbecker）を、この Worker から配信する。外部の配信元（esm.sh）の遅れや停止に左右されないため ----
+const TRYSTERO_B64 = 'LyogZXNtLnNoIC0gdHJ5c3Rlcm9AMC4yNS40L25vc3RyICovCnZhciBTdD1PYmplY3QuZnJlZXplKHtwOjB4ZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmVmZmZmZmMyZm4sbjoweGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZlYmFhZWRjZTZhZjQ4YTAzYmJmZDI1ZThjZDAzNjQxNDFuLGg6MW4sYTowbixiOjduLEd4OjB4NzliZTY2N2VmOWRjYmJhYzU1YTA2Mjk1Y2U4NzBiMDcwMjliZmNkYjJkY2UyOGQ5NTlmMjgxNWIxNmY4MTc5OG4sR3k6MHg0ODNhZGE3NzI2YTNjNDY1NWRhNGZiZmMwZTExMDhhOGZkMTdiNDQ4YTY4NTU0MTk5YzQ3ZDA4ZmZiMTBkNGI4bn0pLHtwOnZlLG46emUsR3g6SnIsR3k6VnIsYjpidH09U3QscmU9MzIsTmU9NjQsYm49e3B1YmxpY0tleTpyZSsxLHB1YmxpY0tleVVuY29tcHJlc3NlZDpOZSsxLHNpZ25hdHVyZTpOZSxzZWVkOnJlK3JlLzJ9LEY9KGU9IiIsbj1FcnJvcik9PntsZXQgdD1uZXcgbihlKSx7Y2FwdHVyZVN0YWNrVHJhY2U6b309RXJyb3I7dGhyb3cgdHlwZW9mIG89PSJmdW5jdGlvbiImJm8odCxGKSx0fSxHcj1lPT5lIGluc3RhbmNlb2YgVWludDhBcnJheXx8QXJyYXlCdWZmZXIuaXNWaWV3KGUpJiZlLmNvbnN0cnVjdG9yLm5hbWU9PT0iVWludDhBcnJheSImJmUuQllURVNfUEVSX0VMRU1FTlQ9PT0xLGZlPShlLG4sdD0iIik9PntsZXQgbz1HcihlKSxpPWU/Lmxlbmd0aCxzPW4hPT12b2lkIDA7aWYoIW98fHMmJmkhPT1uKXtsZXQgcj10JiZgIiR7dH0iIGAsYT1zP2Agb2YgbGVuZ3RoICR7bn1gOiIiLGM9bz9gbGVuZ3RoPSR7aX1gOmB0eXBlPSR7dHlwZW9mIGV9YCx1PXIrImV4cGVjdGVkIFVpbnQ4QXJyYXkiK2ErIiwgZ290ICIrYztyZXR1cm4gbz9GKHUsUmFuZ2VFcnJvcik6Rih1LFR5cGVFcnJvcil9cmV0dXJuIGV9LEZlPWU9Pm5ldyBVaW50OEFycmF5KGUpLFR0PShlLG4pPT5lLnRvU3RyaW5nKDE2KS5wYWRTdGFydChuLCIwIiksUnQ9ZT0+e2xldCBuPSIiO2ZvcihsZXQgdCBvZiBmZShlKSluKz1UdCh0LDIpO3JldHVybiBufSx5ZT17XzA6NDgsXzk6NTcsQTo2NSxGOjcwLGE6OTcsZjoxMDJ9LGd0PWU9PmU+PXllLl8wJiZlPD15ZS5fOT9lLXllLl8wOmU+PXllLkEmJmU8PXllLkY/ZS0oeWUuQS0xMCk6ZT49eWUuYSYmZTw9eWUuZj9lLSh5ZS5hLTEwKTp2b2lkIDAsQXQ9ZT0+e2xldCBuPSJoZXggaW52YWxpZCI7aWYodHlwZW9mIGUhPSJzdHJpbmciKXJldHVybiBGKG4pO2xldCB0PWUubGVuZ3RoLG89dC8yO2lmKHQlMilyZXR1cm4gRihuKTtsZXQgaT1GZShvKTtmb3IobGV0IHM9MCxyPTA7czxvO3MrKyxyKz0yKXtsZXQgYT1ndChlLmNoYXJDb2RlQXQocikpLGM9Z3QoZS5jaGFyQ29kZUF0KHIrMSkpO2lmKGE9PT12b2lkIDB8fGM9PT12b2lkIDApcmV0dXJuIEYobik7aVtzXT1hKjE2K2N9cmV0dXJuIGl9LGh0PSgpPT5nbG9iYWxUaGlzPy5jcnlwdG8/LnN1YnRsZT8/RigiY3J5cHRvLnN1YnRsZSBtdXN0IGJlIGRlZmluZWQsIGNvbnNpZGVyIHBvbHlmaWxsIiksVWU9KC4uLmUpPT57bGV0IG49MDtmb3IobGV0IGkgb2YgZSluKz1mZShpKS5sZW5ndGg7bGV0IHQ9RmUobiksbz0wO2ZvcihsZXQgaSBvZiBlKXQuc2V0KGksbyksbys9aS5sZW5ndGg7cmV0dXJuIHR9LE1uPShlPXJlKT0+KGdsb2JhbFRoaXM/LmNyeXB0bykuZ2V0UmFuZG9tVmFsdWVzKEZlKGUpKSxUbj1CaWdJbnQsQmU9KGUsbix0LG89ImJhZCBudW1iZXI6IG91dCBvZiByYW5nZSIpPT50eXBlb2YgZSE9ImJpZ2ludCI/RihvLFR5cGVFcnJvcik6bjw9ZSYmZTx0P2U6RihvLFJhbmdlRXJyb3IpLEU9KGUsbj12ZSk9PntsZXQgdD1lJW47cmV0dXJuIHQ+PTBuP3Q6bit0fSxvbj1lPT5FKGUsemUpLFpyPShlLG4pPT57KGU9PT0wbnx8bjw9MG4pJiZGKCJubyBpbnZlcnNlIG49IitlKyIgbW9kPSIrbik7bGV0IHQ9RShlLG4pLG89bixpPTBuLHM9MW4scj0xbixhPTBuO2Zvcig7dCE9PTBuOyl7bGV0IGM9by90LHU9byV0LGw9aS1yKmMsZj1zLWEqYztvPXQsdD11LGk9cixzPWEscj1sLGE9Zn1yZXR1cm4gbz09PTFuP0UoaSxuKTpGKCJubyBpbnZlcnNlIil9LEV0PWU9PntsZXQgbj10b1tlXTtyZXR1cm4gdHlwZW9mIG4hPSJmdW5jdGlvbiImJkYoImhhc2hlcy4iK2UrIiBub3Qgc2V0Iiksbn0scHQ9KGUsbix0KT0+ZmUoRXQoZSkobix0KSxyZSwiZGlnZXN0IikseXQ9KGUsbix0KT0+UHJvbWlzZS5yZXNvbHZlKEV0KGUpKG4sdCkpLnRoZW4obz0+ZmUobyxyZSwiZGlnZXN0IikpO3ZhciBTbj1lPT5lIGluc3RhbmNlb2YgU2U/ZTpGKCJQb2ludCBleHBlY3RlZCIpLE10PWU9PkUoRShlKmUpKmUrYnQpLHd0PWU9PkJlKGUsMG4sdmUpLG5uPWU9PkJlKGUsMW4sdmUpLFhyPWU9PkJlKGUsMW4semUpLHNuPWU9PiEoZSYxbiksQnQ9ZT0+VWludDhBcnJheS5vZihlKSxZcj1lPT5CdChzbihlKT8yOjMpLE90PWU9PntsZXQgbj1NdChubihlKSksdD0xbjtmb3IobGV0IG89bixpPSh2ZSsxbikvNG47aT4wbjtpPj49MW4paSYxbiYmKHQ9dCpvJXZlKSxvPW8qbyV2ZTtyZXR1cm4gRSh0KnQpIT09biYmRigic3FydCBpbnZhbGlkIiksc24odCk/dDpFKC10KX07dmFyIFNlPWNsYXNzIGV7c3RhdGljIEJBU0U7c3RhdGljIFpFUk87WDtZO1o7Y29uc3RydWN0b3Iobix0LG8pe3RoaXMuWD13dChuKSx0aGlzLlk9bm4odCksdGhpcy5aPXd0KG8pLE9iamVjdC5mcmVlemUodGhpcyl9c3RhdGljIENVUlZFKCl7cmV0dXJuIFN0fXN0YXRpYyBmcm9tQWZmaW5lKG4pe2xldHt4OnQseTpvfT1uO3JldHVybiB0PT09MG4mJm89PT0wbj9NZTpuZXcgZSh0LG8sMW4pfXN0YXRpYyBmcm9tQnl0ZXMobil7ZmUobik7bGV0e3B1YmxpY0tleTp0LHB1YmxpY0tleVVuY29tcHJlc3NlZDpvfT1ibixpLHM9bi5sZW5ndGgscj1uWzBdLGE9bi5zdWJhcnJheSgxKSxjPXRuKGEsMCxyZSk7aWYocz09PXQmJihyPT09Mnx8cj09PTMpKXtsZXQgdT1PdChjKTtyPT09MyYmKHU9RSgtdSkpLGk9bmV3IGUoYyx1LDFuKX1yZXR1cm4gcz09PW8mJnI9PT00JiYoaT1uZXcgZShjLHRuKGEscmUsTmUpLDFuKSksaT9pLmFzc2VydFZhbGlkaXR5KCk6RigiYmFkIHBvaW50OiBub3Qgb24gY3VydmUiKX1zdGF0aWMgZnJvbUhleChuKXtyZXR1cm4gZS5mcm9tQnl0ZXMoQXQobikpfWdldCB4KCl7cmV0dXJuIHRoaXMudG9BZmZpbmUoKS54fWdldCB5KCl7cmV0dXJuIHRoaXMudG9BZmZpbmUoKS55fWVxdWFscyhuKXtsZXR7WDp0LFk6byxaOml9PXRoaXMse1g6cyxZOnIsWjphfT1TbihuKSxjPUUodCphKSx1PUUocyppKSxsPUUobyphKSxmPUUocippKTtyZXR1cm4gYz09PXUmJmw9PT1mfWlzMCgpe3JldHVybiB0aGlzLmVxdWFscyhNZSl9bmVnYXRlKCl7cmV0dXJuIG5ldyBlKHRoaXMuWCxFKC10aGlzLlkpLHRoaXMuWil9ZG91YmxlKCl7cmV0dXJuIHRoaXMuYWRkKHRoaXMpfWFkZChuKXtsZXR7WDp0LFk6byxaOml9PXRoaXMse1g6cyxZOnIsWjphfT1TbihuKSxjPTBuLHU9YnQsbD0wbixmPTBuLGQ9MG4sZz1FKHUqM24pLHA9RSh0KnMpLFI9RShvKnIpLGI9RShpKmEpLEI9RSh0K28pLHc9RShzK3IpO0I9RShCKncpLHc9RShwK1IpLEI9RShCLXcpLHc9RSh0K2kpO2xldCBDPUUocythKTtyZXR1cm4gdz1FKHcqQyksQz1FKHArYiksdz1FKHctQyksQz1FKG8raSksbD1FKHIrYSksQz1FKEMqbCksbD1FKFIrYiksQz1FKEMtbCksZD1FKGMqdyksbD1FKGcqYiksZD1FKGwrZCksbD1FKFItZCksZD1FKFIrZCksZj1FKGwqZCksUj1FKHArcCksUj1FKFIrcCksYj1FKGMqYiksdz1FKGcqdyksUj1FKFIrYiksYj1FKHAtYiksYj1FKGMqYiksdz1FKHcrYikscD1FKFIqdyksZj1FKGYrcCkscD1FKEMqdyksbD1FKEIqbCksbD1FKGwtcCkscD1FKEIqUiksZD1FKEMqZCksZD1FKGQrcCksbmV3IGUobCxmLGQpfXN1YnRyYWN0KG4pe3JldHVybiB0aGlzLmFkZChTbihuKS5uZWdhdGUoKSl9bXVsdGlwbHkobix0PSEwKXtpZighdCYmbj09PTBuKXJldHVybiBNZTtpZihYcihuKSxuPT09MW4pcmV0dXJuIHRoaXM7aWYodGhpcy5lcXVhbHMoT2UpKXJldHVybiB1byhuKS5wO2xldCBvPU1lLGk9T2U7Zm9yKGxldCBzPXRoaXM7bj4wbjtzPXMuZG91YmxlKCksbj4+PTFuKW4mMW4/bz1vLmFkZChzKTp0JiYoaT1pLmFkZChzKSk7cmV0dXJuIG99bXVsdGlwbHlVbnNhZmUobil7cmV0dXJuIHRoaXMubXVsdGlwbHkobiwhMSl9dG9BZmZpbmUoKXtsZXR7WDpuLFk6dCxaOm99PXRoaXM7aWYodGhpcy5lcXVhbHMoTWUpKXJldHVybnt4OjBuLHk6MG59O2lmKG89PT0xbilyZXR1cm57eDpuLHk6dH07bGV0IGk9WnIobyx2ZSk7cmV0dXJuIEUobyppKSE9PTFuJiZGKCJpbnZlcnNlIGludmFsaWQiKSx7eDpFKG4qaSkseTpFKHQqaSl9fWFzc2VydFZhbGlkaXR5KCl7bGV0e3g6bix5OnR9PXRoaXMudG9BZmZpbmUoKTtyZXR1cm4gbm4obiksbm4odCksRSh0KnQpPT09TXQobik/dGhpczpGKCJiYWQgcG9pbnQ6IG5vdCBvbiBjdXJ2ZSIpfXRvQnl0ZXMobj0hMCl7bGV0e3g6dCx5Om99PXRoaXMuYXNzZXJ0VmFsaWRpdHkoKS50b0FmZmluZSgpLGk9cGUodCk7cmV0dXJuIG4/VWUoWXIobyksaSk6VWUoQnQoNCksaSxwZShvKSl9dG9IZXgobil7cmV0dXJuIFJ0KHRoaXMudG9CeXRlcyhuKSl9fSxPZT1uZXcgU2UoSnIsVnIsMW4pLE1lPW5ldyBTZSgwbiwxbiwwbik7U2UuQkFTRT1PZTtTZS5aRVJPPU1lO3ZhciBRcj0oZSxuLHQpPT5PZS5tdWx0aXBseShuLCExKS5hZGQoZS5tdWx0aXBseSh0LCExKSkuYXNzZXJ0VmFsaWRpdHkoKSxDZT1lPT5UbigiMHgiKyhSdChlKXx8IjAiKSksdG49KGUsbix0KT0+Q2UoZS5zdWJhcnJheShuLHQpKSxlbz0ybioqMjU2bixwZT1lPT5BdChUdChCZShlLDBuLGVvKSxOZSkpLG5vPWU9PntsZXQgbj1DZShmZShlLHJlLCJzZWNyZXQga2V5IikpO3JldHVybiBCZShuLDFuLHplLCJpbnZhbGlkIHNlY3JldCBrZXk6IG91dHNpZGUgb2YgcmFuZ2UiKX07dmFyIFB0PSJTSEEtMjU2Iix0bz17aG1hY1NoYTI1NkFzeW5jOmFzeW5jKGUsbik9PntsZXQgdD1odCgpLG89IkhNQUMiLGk9YXdhaXQgdC5pbXBvcnRLZXkoInJhdyIsZSx7bmFtZTpvLGhhc2g6e25hbWU6UHR9fSwhMSxbInNpZ24iXSk7cmV0dXJuIEZlKGF3YWl0IHQuc2lnbihvLGksbikpfSxobWFjU2hhMjU2OnZvaWQgMCxzaGEyNTZBc3luYzphc3luYyBlPT5GZShhd2FpdCBodCgpLmRpZ2VzdChQdCxlKSksc2hhMjU2OnZvaWQgMH07dmFyIHJvPWU9PntpZihlPWU9PT12b2lkIDA/TW4oYm4uc2VlZCk6ZSxmZShlKSxlLmxlbmd0aDxibi5zZWVkfHxlLmxlbmd0aD4xMDI0KXJldHVybiBGKCJleHBlY3RlZCA0OC0xMDI0YiIsUmFuZ2VFcnJvcik7bGV0IG49RShDZShlKSx6ZS0xbik7cmV0dXJuIHBlKG4rMW4pfSxvbz1lPT5uPT57bGV0IHQ9cm8obik7cmV0dXJue3NlY3JldEtleTp0LHB1YmxpY0tleTplKHQpfX07dmFyIEN0PWU9PlVpbnQ4QXJyYXkuZnJvbSgiQklQMDM0MC8iK2Usbj0+bi5jaGFyQ29kZUF0KDApKSxEdD0iYXV4IixMdD0ibm9uY2UiLHh0PSJjaGFsbGVuZ2UiLFJuPShlLC4uLm4pPT57bGV0IHQ9cHQoInNoYTI1NiIsQ3QoZSkpO3JldHVybiBwdCgic2hhMjU2IixVZSh0LHQsLi4ubikpfSxBbj0oZSwuLi5uKT0+eXQoInNoYTI1NkFzeW5jIixDdChlKSkudGhlbih0PT55dCgic2hhMjU2QXN5bmMiLFVlKHQsdCwuLi5uKSkpLEJuPWU9PntsZXQgbj1ubyhlKSx0PU9lLm11bHRpcGx5KG4pLHt4Om8seTppfT10LmFzc2VydFZhbGlkaXR5KCkudG9BZmZpbmUoKSxzPXNuKGkpP246b24oLW4pLHI9cGUobyk7cmV0dXJue2Q6cyxweDpyfX0sT249ZT0+b24oQ2UoZSkpLEh0PSguLi5lKT0+T24oUm4oeHQsLi4uZSkpLF90PWFzeW5jKC4uLmUpPT5Pbihhd2FpdCBBbih4dCwuLi5lKSksSXQ9ZT0+Qm4oZSkucHgsc289b28oSXQpLE50PShlLG4sdCk9PntsZXR7cHg6byxkOml9PUJuKG4pO3JldHVybnttOmZlKGUpLHB4Om8sZDppLGE6ZmUodCxyZSl9fSxVdD1lPT57bGV0IG49T24oZSk7bj09PTBuJiZGKCJzaWduIGZhaWxlZDogayBpcyB6ZXJvIik7bGV0e3B4OnQsZDpvfT1CbihwZShuKSk7cmV0dXJue3J4OnQsazpvfX0sS3Q9KGUsbix0LG8pPT5VZShuLHBlKG9uKGUrdCpvKSkpLGp0PSJpbnZhbGlkIHNpZ25hdHVyZSBwcm9kdWNlZCIsYW89KGUsbix0PU1uKHJlKSk9PntsZXR7bTpvLHB4OmksZDpzLGE6cn09TnQoZSxuLHQpLGE9Um4oRHQsciksYz1wZShzXkNlKGEpKSx1PVJuKEx0LGMsaSxvKSx7cng6bCxrOmZ9PVV0KHUpLGQ9SHQobCxpLG8pLGc9S3QoZixsLGQscyk7cmV0dXJuICR0KGcsbyxpKXx8RihqdCksZ30saW89YXN5bmMoZSxuLHQ9TW4ocmUpKT0+e2xldHttOm8scHg6aSxkOnMsYTpyfT1OdChlLG4sdCksYT1hd2FpdCBBbihEdCxyKSxjPXBlKHNeQ2UoYSkpLHU9YXdhaXQgQW4oTHQsYyxpLG8pLHtyeDpsLGs6Zn09VXQodSksZD1hd2FpdCBfdChsLGksbyksZz1LdChmLGwsZCxzKTtyZXR1cm4gYXdhaXQgV3QoZyxvLGkpfHxGKGp0KSxnfSxjbz0oZSxuKT0+ZSBpbnN0YW5jZW9mIFByb21pc2U/ZS50aGVuKG4pOm4oZSkscXQ9KGUsbix0LG8pPT57bGV0IGk9ZmUoZSxOZSwic2lnbmF0dXJlIikscz1mZShuLHZvaWQgMCwibWVzc2FnZSIpLHI9ZmUodCxyZSwicHVibGljS2V5Iik7dHJ5e2xldCBhPUNlKHIpLGM9T3QoYSksdT1uZXcgU2UoYSxjLDFuKS5hc3NlcnRWYWxpZGl0eSgpLGw9cGUodS50b0FmZmluZSgpLngpLGY9dG4oaSwwLHJlKTtCZShmLDFuLHZlKTtsZXQgZD10bihpLHJlLE5lKTtCZShkLDFuLHplKTtsZXQgZz1VZShwZShmKSxsLHMpO3JldHVybiBjbyhvKGcpLHA9PntsZXR7eDpSLHk6Yn09UXIodSxkLG9uKC1wKSkudG9BZmZpbmUoKTtyZXR1cm4hKCFzbihiKXx8UiE9PWYpfSl9Y2F0Y2h7cmV0dXJuITF9fSwkdD0oZSxuLHQpPT5xdChlLG4sdCxIdCksV3Q9YXN5bmMoZSxuLHQpPT5xdChlLG4sdCxfdCksQ249T2JqZWN0LmZyZWV6ZSh7a2V5Z2VuOnNvLGdldFB1YmxpY0tleTpJdCxzaWduOmFvLHZlcmlmeTokdCxzaWduQXN5bmM6aW8sdmVyaWZ5QXN5bmM6V3R9KSxybj04LGZvPTI1NixGdD1NYXRoLmNlaWwoZm8vcm4pKzEsRW49MioqKHJuLTEpLGxvPSgpPT57bGV0IGU9W10sbj1PZSx0PW47Zm9yKGxldCBvPTA7bzxGdDtvKyspe3Q9bixlLnB1c2godCk7Zm9yKGxldCBpPTE7aTxFbjtpKyspdD10LmFkZChuKSxlLnB1c2godCk7bj10LmRvdWJsZSgpfXJldHVybiBlfSxrdCx2dD0oZSxuKT0+e2xldCB0PW4ubmVnYXRlKCk7cmV0dXJuIGU/dDpufSx1bz1lPT57bGV0IG49a3R8fChrdD1sbygpKSx0PU1lLG89T2UsaT0yKipybixzPWkscj1UbihpLTEpLGE9VG4ocm4pO2ZvcihsZXQgYz0wO2M8RnQ7YysrKXtsZXQgdT1OdW1iZXIoZSZyKTtlPj49YSx1PkVuJiYodS09cyxlKz0xbik7bGV0IGw9YypFbixmPWwsZD1sK01hdGguYWJzKHUpLTEsZz1jJTIhPT0wLHA9dTwwO3U9PT0wP289by5hZGQodnQoZyxuW2ZdKSk6dD10LmFkZCh2dChwLG5bZF0pKX1yZXR1cm4gZSE9PTBuJiZGKCJpbnZhbGlkIHduYWYiKSx7cDp0LGY6b319O3ZhcntmbG9vcjpMbixtaW46bW8sc2luOmdvfT1NYXRoLEc9IlRyeXN0ZXJvIixiZT0oZSxuKT0+QXJyYXkoZSkuZmlsbCh2b2lkIDApLm1hcChuKSxobz0iMDEyMzQ1Njc4OUFhQmJDY0RkRWVGZkdnSGhJaUpqS2tMbE1tTm5Pb1BwUXFSclNzVHRVdVZ2V3dYeFl5WnoiLGxlPWU9PmJlKGUsKCk9PmhvW0xuKE1hdGgucmFuZG9tKCkqNjIpXT8/IiIpLmpvaW4oIiIpLFk9bGUoMjApLGFlPVByb21pc2UuYWxsLmJpbmQoUHJvbWlzZSksSG49dHlwZW9mIHdpbmRvdzwidSIse2VudHJpZXM6bWUsZnJvbUVudHJpZXM6X24sa2V5czpRLHZhbHVlczp3ZX09T2JqZWN0LFY9KCk9Pnt9LGFuPSJjYW5kaWRhdGUiLF89ZT0+KGUhPT1udWxsJiZjbGVhclRpbWVvdXQoZSksbnVsbCksST1lPT5uZXcgRXJyb3IoYCR7R306ICR7ZX1gKSxQZT0oZSxuKT0+ZSBpbnN0YW5jZW9mIEVycm9yJiZlLm1lc3NhZ2U/ZS5tZXNzYWdlOnR5cGVvZiBlPT0ic3RyaW5nIiYmZT9lOlooZT8/biksdWU9KGUsbik9PmUgaW5zdGFuY2VvZiBFcnJvcj9lOkkoUGUoZSxuKSkscG89bmV3IFRleHRFbmNvZGVyLHlvPW5ldyBUZXh0RGVjb2RlcixkZT1lPT5wby5lbmNvZGUoZSksZ2U9ZT0+eW8uZGVjb2RlKGUpLGtlPWU9PmUucmVkdWNlKChuLHQpPT5uK3QudG9TdHJpbmcoMTYpLnBhZFN0YXJ0KDIsIjAiKSwiIiksRGU9KC4uLmUpPT5lLmpvaW4oIkAiKSx3bz0oZSxuKT0+e2xldCB0PVsuLi5lXSxvPSgpPT57bGV0IHM9Z28obisrKSoxZTQ7cmV0dXJuIHMtTG4ocyl9LGk9dC5sZW5ndGg7Zm9yKDtpOyl7bGV0IHM9TG4obygpKmktLSkscj10W2ldO3RbaV09dFtzXSx0W3NdPXJ9cmV0dXJuIHR9LEluPShlLG4sdCxvPSExKT0+ZS5yZWxheUNvbmZpZz8udXJsc3x8KG8/d28obixjbihlLmFwcElkKSk6bikuc2xpY2UoMCxlLnJlbGF5Q29uZmlnPy5yZWR1bmRhbmN5Pz90KSxaPUpTT04uc3RyaW5naWZ5LGhlPWU9Pnt0cnl7cmV0dXJuIEpTT04ucGFyc2UoZSl9Y2F0Y2h7dGhyb3cgSShgZmFpbGVkIHRvIHBhcnNlIEpTT046ICR7ZX1gKX19LGNuPShlLG49TnVtYmVyLk1BWF9TQUZFX0lOVEVHRVIpPT5lLnNwbGl0KCIiKS5yZWR1Y2UoKHQsbyk9PnQrby5jaGFyQ29kZUF0KDApLDApJW4senQ9MzMzMyxKdD02ZTQsRG49e30sSmU9bnVsbCx4bj1udWxsLE5uPSgpPT57SmV8fChKZT1uZXcgUHJvbWlzZShlPT57eG49ZX0pLmZpbmFsbHkoKCk9Pnt4bj1udWxsLEplPW51bGx9KSl9LFVuPSgpPT57eG4/LigpfSxLbj0oZSxuLHQpPT57bGV0IG89e30saT0hMSxzPSExLHIsYT1WO28uaXNDbG9zZWQ9ITEsby5yZWFkeT1uZXcgUHJvbWlzZSh1PT5hPXUpO2xldCBjPSgpPT57aWYoby5pc0Nsb3NlZClyZXR1cm47cj12b2lkIDAscz0hMTtsZXQgdT1uZXcgV2ViU29ja2V0KGUpO3Uub25jbG9zZT0oKT0+e2lmKG8uaXNDbG9zZWR8fHMpcmV0dXJuO2lmKHM9ITAsSmUpe0plLnRoZW4oYyk7cmV0dXJufWxldCBsPURuW2VdPz89enQ7aWYobD49SnQpe28uaXNDbG9zZWQ9ITA7cmV0dXJufXI9c2V0VGltZW91dChjLE1hdGgucmFuZG9tKCkqbCksRG5bZV09bW8obCoyLEp0KX0sdS5vbm1lc3NhZ2U9bD0+bihTdHJpbmcobC5kYXRhKSksby5zb2NrZXQ9dSxvLnVybD11LnVybCx1Lm9ub3Blbj0oKT0+e2xldCBsPWk7aT0hMCxhKG8pLERuW2VdPXp0LGwmJnQ/LigpfSxvLnNlbmQ9bD0+e3UucmVhZHlTdGF0ZT09PTEmJnUuc2VuZChsKX19O3JldHVybiBvLmNsb3NlPSgpPT57by5pc0Nsb3NlZD0hMCxyIT09dm9pZCAwJiYoY2xlYXJUaW1lb3V0KHIpLHI9dm9pZCAwKSxvLnNvY2tldC5jbG9zZSgpfSxjKCksb307dmFyIGpuPWU9PntsZXQgbj17fSx0PW5ldyBXZWFrTWFwLG89cj0+e2xldCBhPXQuZ2V0KHIpO2lmKCFhKXRocm93IEkoInJlbGF5IGJvb2trZWVwaW5nIG1pc3NpbmcgcmVnaXN0cmF0aW9uIGZvciByZWxheSBjbGllbnQiKTtyZXR1cm4gYX0saT0oKT0+e2xldCByPXt9LGE9Yz0+cltjXT8/PXt9O3JldHVybntmb3JLZXk6YSxmb3JSZWxheTpjPT5hKG8oYykpfX0scz0ocixhKT0+KG5bcl09YSx0LnNldChhLHIpLGEpO3JldHVybntyZWdpc3RlcjoocixhKT0+e2xldCBjPW5bcl07cmV0dXJuIGN8fHMocixhKCkpfSxrZXlPZjpvLHNjb3BlZDppLGdldFNvY2tldHM6KCk9Pl9uKG1lKG4pLmZsYXRNYXAoKFtyLGFdKT0+e2xldCBjPWUoYSk7cmV0dXJuIGM/W1tyLGNdXTpbXX0pKX19LFZ0PSgpPT57aWYoSG4pe2xldCBlPW5ldyBBYm9ydENvbnRyb2xsZXI7cmV0dXJuIGFkZEV2ZW50TGlzdGVuZXIoIm9ubGluZSIsVW4se3NpZ25hbDplLnNpZ25hbH0pLGFkZEV2ZW50TGlzdGVuZXIoIm9mZmxpbmUiLE5uLHtzaWduYWw6ZS5zaWduYWx9KSwoKT0+ZS5hYm9ydCgpfXJldHVybiBWfTt2YXIgcW49IkFFUy1HQ00iLFBvPXt9LGtvPWU9PmJ0b2EoU3RyaW5nLmZyb21DaGFyQ29kZS5hcHBseShudWxsLEFycmF5LmZyb20obmV3IFVpbnQ4QXJyYXkoZSkpKSksdm89ZT0+e2xldCBuPWF0b2IoZSk7cmV0dXJuIG5ldyBVaW50OEFycmF5KG4ubGVuZ3RoKS5tYXAoKHQsbyk9Pm4uY2hhckNvZGVBdChvKSkuYnVmZmVyfSxMZT1hc3luYyhlLG4pPT5uZXcgVWludDhBcnJheShhd2FpdCBjcnlwdG8uc3VidGxlLmRpZ2VzdChlLGRlKG4pKSksVGU9YXN5bmMgZT0+UG9bZV0/Pz1BcnJheS5mcm9tKGF3YWl0IExlKCJTSEEtMSIsZSkpLm1hcChuPT5uLnRvU3RyaW5nKDM2KSkuam9pbigiIiksR3Q9YXN5bmMoZSxuLHQpPT5jcnlwdG8uc3VidGxlLmltcG9ydEtleSgicmF3Iixhd2FpdCBjcnlwdG8uc3VidGxlLmRpZ2VzdCh7bmFtZToiU0hBLTI1NiJ9LGRlKGAke2V9OiR7bn06JHt0fWApKSx7bmFtZTpxbn0sITEsWyJlbmNyeXB0IiwiZGVjcnlwdCJdKSxadD1hc3luYyhlLG4pPT5rZShhd2FpdCBMZSgiU0hBLTI1NiIsYCR7R306JHtlfToke259YCkpLFh0PSIkIixZdD0iLCIsUXQ9YXN5bmMoZSxuKT0+e2xldCB0PWNyeXB0by5nZXRSYW5kb21WYWx1ZXMobmV3IFVpbnQ4QXJyYXkoMTYpKTtyZXR1cm4gdC5qb2luKFl0KStYdCtrbyhhd2FpdCBjcnlwdG8uc3VidGxlLmVuY3J5cHQoe25hbWU6cW4saXY6dH0sYXdhaXQgZSxkZShuKSkpfSxlcj1hc3luYyhlLG4pPT57bGV0W3Qsb109bi5zcGxpdChYdCk7cmV0dXJuIGdlKGF3YWl0IGNyeXB0by5zdWJ0bGUuZGVjcnlwdCh7bmFtZTpxbixpdjpuZXcgVWludDhBcnJheSh0Py5zcGxpdChZdCkubWFwKE51bWJlcik/P1tdKX0sYXdhaXQgZSx2byhvPz8iIikpKX07dmFyIFZlPTU3MzMzLFNvPTE4ZTQsYm89MjAsbnI9Y2xhc3N7bWFrZU9mZmVyO3Bvb2w9W107cG9vbGVkPW5ldyBTZXQ7bGVhc2VkPW5ldyBNYXA7cmVjeWNsaW5nPW5ldyBTZXQ7Y2xlYW51cFRpbWVyPW51bGw7YWN0aXZlPSExO2NvbnN0cnVjdG9yKGUpe3RoaXMubWFrZU9mZmVyPWV9Z2V0IGlzQWN0aXZlKCl7cmV0dXJuIHRoaXMuYWN0aXZlfXdhcm11cCgpe3RoaXMucG9vbD1bXSx0aGlzLnBvb2xlZC5jbGVhcigpLGJlKGJvLHRoaXMubWFrZU9mZmVyKS5mb3JFYWNoKGU9PnRoaXMucHVzaChlKSksdGhpcy5hY3RpdmU9ITAsdGhpcy5jbGVhbnVwVGltZXI9c2V0SW50ZXJ2YWwoKCk9Pnt0aGlzLnBvb2w9dGhpcy5wb29sLmZpbHRlcihlPT5lLmlzRGVhZD8odGhpcy5wb29sZWQuZGVsZXRlKGUpLCExKTohMCl9LFZlKX1wdXNoKGUpe2UuaXNEZWFkfHx0aGlzLnBvb2xlZC5oYXMoZSl8fHRoaXMubGVhc2VkLmhhcyhlKXx8KHRoaXMucG9vbC5wdXNoKGUpLHRoaXMucG9vbGVkLmFkZChlKSl9c2hpZnQoZSl7bGV0IG49W107Zm9yKDtuLmxlbmd0aDxlJiZ0aGlzLnBvb2wubGVuZ3RoPjA7KXtsZXQgdD10aGlzLnBvb2wuc2hpZnQoKTtpZighdClicmVhazt0aGlzLnBvb2xlZC5kZWxldGUodCksbi5wdXNoKHQpfXJldHVybiBufWNsYWltTGVhc2VkKGUpe2xldCBuPXRoaXMubGVhc2VkLmdldChlKTtuJiYoXyhuKSx0aGlzLmxlYXNlZC5kZWxldGUoZSkpfXJlY3ljbGUoZSl7aWYoIShlLmlzRGVhZHx8dGhpcy5yZWN5Y2xpbmcuaGFzKGUpKSl7aWYoZS5jb25uZWN0aW9uLnJlbW90ZURlc2NyaXB0aW9uKXtlLmRlc3Ryb3koKTtyZXR1cm59aWYoIXRoaXMuYWN0aXZlKXtlLmRlc3Ryb3koKTtyZXR1cm59dGhpcy5yZWN5Y2xpbmcuYWRkKGUpLGUuc2V0SGFuZGxlcnMoe2Nvbm5lY3Q6VixjbG9zZTpWLGVycm9yOlZ9KSxlLmdldE9mZmVyKCEwKS50aGVuKG49PntpZighbnx8bi50eXBlIT09Im9mZmVyInx8ZS5pc0RlYWR8fCF0aGlzLmFjdGl2ZSl7ZS5kZXN0cm95KCk7cmV0dXJufXRoaXMucHVzaChlKX0pLmNhdGNoKCgpPT5lLmRlc3Ryb3koKSkuZmluYWxseSgoKT0+dGhpcy5yZWN5Y2xpbmcuZGVsZXRlKGUpKX19cmVjbGFpbUxlYXNlZChlKXtsZXQgbj10aGlzLmxlYXNlZC5nZXQoZSk7biYmKF8obiksdGhpcy5sZWFzZWQuZGVsZXRlKGUpLHRoaXMucmVjeWNsZShlKSl9bGVhc2UoZSl7dGhpcy5jbGFpbUxlYXNlZChlKSx0aGlzLmxlYXNlZC5zZXQoZSxzZXRUaW1lb3V0KCgpPT57dGhpcy5sZWFzZWQuZGVsZXRlKGUpLHRoaXMucmVjeWNsZShlKX0sU28pKX1jaGVja291dChlLG4sdCl7bGV0IG89dGhpcy5zaGlmdChlKSxpPU1hdGgubWF4KDAsZS1vLmxlbmd0aCk7aT4wJiZvLnB1c2goLi4uYmUoaSx0aGlzLm1ha2VPZmZlcikpO2xldCBzPWFzeW5jKHIsYT0hMSk9Pnt0cnl7bGV0IGM9YXdhaXQgdChyKTtyZXR1cm4gbj8odGhpcy5sZWFzZShyKSx7cGVlcjpyLG9mZmVyOmMsY2xhaW06KCk9PnRoaXMuY2xhaW1MZWFzZWQocikscmVjbGFpbTooKT0+dGhpcy5yZWNsYWltTGVhc2VkKHIpfSk6e3BlZXI6cixvZmZlcjpjfX1jYXRjaChjKXtpZih0aGlzLmNsYWltTGVhc2VkKHIpLHRoaXMucG9vbGVkLmRlbGV0ZShyKSxyLmRlc3Ryb3koKSwhYSlyZXR1cm4gcyh0aGlzLm1ha2VPZmZlcigpLCEwKTt0aHJvdyBjfX07cmV0dXJuIGFlKG8ubWFwKHI9PnMocikpKX1nZXRPZmZlcnMoZSxuKXtyZXR1cm4gdGhpcy5jaGVja291dChlLCEwLG4pfWRlc3Ryb3koKXt0aGlzLmFjdGl2ZT0hMSx0aGlzLmNsZWFudXBUaW1lciYmKGNsZWFySW50ZXJ2YWwodGhpcy5jbGVhbnVwVGltZXIpLHRoaXMuY2xlYW51cFRpbWVyPW51bGwpLHRoaXMucG9vbC5mb3JFYWNoKGU9PmUuZGVzdHJveSgpKSx0aGlzLnBvb2w9W10sdGhpcy5wb29sZWQuY2xlYXIoKSx0aGlzLmxlYXNlZC5mb3JFYWNoKChlLG4pPT57XyhlKSxuLmRlc3Ryb3koKX0pLHRoaXMubGVhc2VkLmNsZWFyKCksdGhpcy5yZWN5Y2xpbmcuZm9yRWFjaChlPT5lLmRlc3Ryb3koKSksdGhpcy5yZWN5Y2xpbmcuY2xlYXIoKX19O3ZhciAkbj1JKCJpbmNvcnJlY3QgcGFzc3dvcmQgZm9yIG92ZXJsYXBwaW5nIHJvb20iKSx0cj0oZSxuLHQpPT57bGV0IG89cj0+TGUoIlNIQS0yNTYiLGAke3J9OiR7ZX06JHtufToke3R9YCkudGhlbihrZSksaT1hc3luYyhyLGEsYyk9PntpZighZSlyZXR1cm47aWYoYyl7bGV0IGw9bGUoMzYpO2F3YWl0IHIoe19fdHJ5c3Rlcm9fcHc6ImNoYWxsZW5nZSIsYzpsfSk7bGV0e2RhdGE6Zn09YXdhaXQgYSgpO2lmKCFmfHx0eXBlb2YgZiE9Im9iamVjdCJ8fGYuX190cnlzdGVyb19wdyE9PSJyZXNwb25zZSJ8fHR5cGVvZiBmLmghPSJzdHJpbmciKXRocm93ICRuO2xldCBkPWF3YWl0IG8obCk7aWYoZi5oIT09ZCl0aHJvdyAkbjtyZXR1cm59bGV0e2RhdGE6dX09YXdhaXQgYSgpO2lmKCF1fHx0eXBlb2YgdSE9Im9iamVjdCJ8fHUuX190cnlzdGVyb19wdyE9PSJjaGFsbGVuZ2UifHx0eXBlb2YgdS5jIT0ic3RyaW5nIil0aHJvdyAkbjthd2FpdCByKHtfX3RyeXN0ZXJvX3B3OiJyZXNwb25zZSIsaDphd2FpdCBvKHUuYyl9KX07cmV0dXJue3J1bjppLGNvbXBvc2U6cj0+ZXx8cj9hc3luYyhhLGMsdSxsKT0+e2F3YWl0IGkoYyx1LGwpLGF3YWl0IHI/LihhLGMsdSxsKX06dm9pZCAwfX0sVG89ZT0+e2xldCBuPVBlKGUsInVua25vd24gZXJyb3IiKTtyZXR1cm4gbi5zdGFydHNXaXRoKCJoYW5kc2hha2UgIik/bjpgaGFuZHNoYWtlIGZhaWxlZDogJHtufWB9LHJyPSh7b25QZWVySGFuZHNoYWtlOmUsb25IYW5kc2hha2VFcnJvcjpuLGhhbmRzaGFrZVRpbWVvdXRNczp0LHNlbmRIYW5kc2hha2VEYXRhOm8sc2VuZEhhbmRzaGFrZVJlYWR5Omksb25BY3RpdmF0ZTpzLG9uRmFpbHVyZTpyfSk9PntsZXQgYT17fSxjPShmLGQpPT57bGV0IGc9YVtmXTshZ3x8ZCYmZy5wZWVyIT09ZHx8Zy5pc0FjdGl2ZXx8IWcuZGlkTG9jYWxIYW5kc2hha2VQYXNzfHwhZy5kaWRSZWNlaXZlUmVtb3RlUmVhZHl8fChnLmlzQWN0aXZlPSEwLGcuaGFuZHNoYWtlVGltZXI9XyhnLmhhbmRzaGFrZVRpbWVyKSxzKGYsZy5wZWVyKSl9LHU9KGYsZCxnKT0+e2xldCBwPWFbZl07aWYoIXB8fHAucGVlciE9PWQpcmV0dXJuO2xldCBSPVRvKGcpO24/LihmLFIpLHIoZixkLEkoUikpfSxsPShmLGQpPT57bGV0IGc9YVtmXTshZ3x8Zy5wZWVyIT09ZHx8Zy5pc0FjdGl2ZXx8KGcuZGlkTG9jYWxIYW5kc2hha2VQYXNzPSEwLGkoIiIsZikuY2F0Y2gocD0+dShmLGQsSShgZmFpbGVkIHNlbmRpbmcgaGFuZHNoYWtlIHJlYWRpbmVzczogJHtQZShwLCJ1bmtub3duIHNlbmQgZmFpbHVyZSIpfWApKSksYyhmLGQpKX07cmV0dXJue2FkZFBlZXI6KGYsZCk9PnthW2ZdPXtwZWVyOmQsaXNBY3RpdmU6ITEsZGlkTG9jYWxIYW5kc2hha2VQYXNzOiExLGRpZFJlY2VpdmVSZW1vdGVSZWFkeTohMSxoYW5kc2hha2VUaW1lcjpudWxsLHBlbmRpbmdIYW5kc2hha2VQYXlsb2FkczpbXSxoYW5kc2hha2VXYWl0ZXJzOltdfX0sY2xlYXJQZWVyOihmLGQpPT57bGV0IGc9YVtmXTtnJiYoZy5oYW5kc2hha2VUaW1lcj1fKGcuaGFuZHNoYWtlVGltZXIpLGcucGVuZGluZ0hhbmRzaGFrZVBheWxvYWRzLmxlbmd0aD0wLGcuaGFuZHNoYWtlV2FpdGVycy5zcGxpY2UoMCkuZm9yRWFjaChwPT5wLnJlamVjdChkKSksZGVsZXRlIGFbZl0pfSxjYW5SZWNlaXZlRnJvbVBlZXI6KGYsZCk9PntsZXQgZz1hW2ZdO3JldHVybiEhKGcmJihnLmlzQWN0aXZlfHxkKSl9LHN0YXJ0OihmLGQpPT57bGV0IGc9YVtmXTtpZighZ3x8Zy5wZWVyIT09ZClyZXR1cm47Zy5oYW5kc2hha2VUaW1lcj1zZXRUaW1lb3V0KCgpPT51KGYsZCxJKGBoYW5kc2hha2UgdGltZWQgb3V0IGFmdGVyICR7dH1tc2ApKSx0KTtsZXQgcD1hc3luYyhCLHcpPT57YXdhaXQgbyhCLGYsdyl9LFI9KCk9Pm5ldyBQcm9taXNlKChCLHcpPT57bGV0IEM9YVtmXTtpZighQ3x8Qy5wZWVyIT09ZCl7dyhJKCJwZWVyIGRpc2Nvbm5lY3RlZCBkdXJpbmcgaGFuZHNoYWtlIikpO3JldHVybn1sZXQgSD1DLnBlbmRpbmdIYW5kc2hha2VQYXlsb2Fkcy5zaGlmdCgpO2lmKEgpe0IoSCk7cmV0dXJufUMuaGFuZHNoYWtlV2FpdGVycy5wdXNoKHtyZXNvbHZlOkIscmVqZWN0OnY9Pncodil9KX0pLGI9WTxmO1Byb21pc2UucmVzb2x2ZShlPy4oZixwLFIsYikpLnRoZW4oKCk9PmwoZixkKSkuY2F0Y2goQj0+dShmLGQsdWUoQiwiaGFuZHNoYWtlIGZhaWxlZCIpKSl9LHJlY2VpdmVIYW5kc2hha2VEYXRhOihmLGQsZyk9PntsZXQgcD1hW2RdO2lmKCFwfHxwLmlzQWN0aXZlKXJldHVybjtsZXQgUj1nPT09dm9pZCAwP3tkYXRhOmZ9OntkYXRhOmYsbWV0YWRhdGE6Z30sYj1wLmhhbmRzaGFrZVdhaXRlcnMuc2hpZnQoKTtpZihiKXtiLnJlc29sdmUoUik7cmV0dXJufXAucGVuZGluZ0hhbmRzaGFrZVBheWxvYWRzLnB1c2goUil9LHJlY2VpdmVIYW5kc2hha2VSZWFkeTpmPT57bGV0IGQ9YVtmXTshZHx8ZC5pc0FjdGl2ZXx8KGQuZGlkUmVjZWl2ZVJlbW90ZVJlYWR5PSEwLGMoZikpfX19O3ZhciBSbz0xNWUzLEFvPTVlMyxvcj0iaWNlZ2F0aGVyaW5nc3RhdGVjaGFuZ2UiLEVvPSJpY2Vjb25uZWN0aW9uc3RhdGVjaGFuZ2UiLEdlPSJvZmZlciIsTW89ImFuc3dlciIsQm89L291dCBvZiByYW5nZS9pLHNyPWU9PmUucmVwbGFjZSgvIChcUytcLmxvY2FsKSAoXGQrKSB0eXAgaG9zdC9nLCIgMTI3LjAuMC4xICQyIHR5cCBob3N0IiksV249KGUse3RyaWNrbGVJY2U6bixydGNDb25maWc6dCxydGNQb2x5ZmlsbDpvLHR1cm5Db25maWc6aSxfdGVzdF9vbmx5X21kbnNIb3N0RmFsbGJhY2tUb0xvb3BiYWNrOnN9KT0+e2xldCByPW5ldyhvPz9SVENQZWVyQ29ubmVjdGlvbikoe2ljZVNlcnZlcnM6T28uY29uY2F0KGk/P1tdKSwuLi50fSksYT17fSxjPVtdLHU9W10sbD1uIT09ITEsZj1bXSxkPVtdLGc9ITEscD0hMSxSPW51bGwsYj1udWxsLEI9ITEsdz0oKT0+Yj1fKGIpLEM9KCk9PntCfHwoQj0hMCx3KCksYS5jbG9zZT8uKCkpfSxIPWg9PnthLnNpZ25hbD9hLnNpZ25hbChoKTpjLnB1c2goaCl9LHY9aD0+e2xldCBrPWEuc2lnbmFsO2Euc2lnbmFsPXg9PntrPy4oeCksaCh4KX0sYy5sZW5ndGg+MCYmYy5zcGxpY2UoMCkuZm9yRWFjaCh4PT5hLnNpZ25hbD8uKHgpKX0sQT1oPT5zP3NyKGgpOmgsSz1oPT57aWYoIXN8fHR5cGVvZiBoLmNhbmRpZGF0ZSE9InN0cmluZyIpcmV0dXJuIGg7bGV0IGs9c3IoaC5jYW5kaWRhdGUpO3JldHVybiBrPT09aC5jYW5kaWRhdGU/aDp7Li4uaCxjYW5kaWRhdGU6a319LFQ9aD0+KHt0eXBlOmgubG9jYWxEZXNjcmlwdGlvbj8udHlwZT8/R2Usc2RwOkEoaC5sb2NhbERlc2NyaXB0aW9uPy5zZHA/PyIiKX0pLCQ9KCk9PntsZXQgaD1yLnJlbW90ZURlc2NyaXB0aW9uPy5zZHA7cmV0dXJuIGg/aC5tYXRjaCgvYT1pY2UtdWZyYWc6KFteXHNdKykvKT8uWzFdPz9udWxsOm51bGx9LHo9KCk9PihyLnJlbW90ZURlc2NyaXB0aW9uPy5zZHA/Lm1hdGNoKC9ebT0vZ20pPz9bXSkubGVuZ3RoLGo9aD0+e2lmKCFyLnJlbW90ZURlc2NyaXB0aW9uKXJldHVybiExO2xldCBrPXooKTtpZih0eXBlb2YgaC5zZHBNTGluZUluZGV4PT0ibnVtYmVyIiYmaz4wJiZoLnNkcE1MaW5lSW5kZXg+PWspcmV0dXJuITE7bGV0IHg9JCgpO3JldHVybiEoeCYmaC51c2VybmFtZUZyYWdtZW50JiZoLnVzZXJuYW1lRnJhZ21lbnQhPT14KX0sVz1hc3luYyBoPT57dHJ5e3JldHVybiBhd2FpdCByLmFkZEljZUNhbmRpZGF0ZShoKSwhMH1jYXRjaChrKXtpZihrIGluc3RhbmNlb2YgRXJyb3ImJkJvLnRlc3Qoay5tZXNzYWdlKSYmdHlwZW9mIGguc2RwTUxpbmVJbmRleD09Im51bWJlciIpcmV0dXJuITE7dGhyb3cga319LGVlPWFzeW5jKCk9PntpZighci5yZW1vdGVEZXNjcmlwdGlvbnx8Zi5sZW5ndGg9PT0wKXJldHVybjtsZXQgaD1mLnNwbGljZSgwKSxrPVtdO2ZvcihsZXQgeCBvZiBoKXtpZighaih4KSl7ay5wdXNoKHgpO2NvbnRpbnVlfWF3YWl0IFcoeCl8fGsucHVzaCh4KX1rLmxlbmd0aD4wJiZmLnB1c2goLi4uayl9LG09YXN5bmMgaD0+e2lmKGooaCkpe2F3YWl0IFcoaCl8fGYucHVzaChoKTtyZXR1cm59Zi5wdXNoKGgpfSx5PWg9PntoLmJpbmFyeVR5cGU9ImFycmF5YnVmZmVyIixoLmJ1ZmZlcmVkQW1vdW50TG93VGhyZXNob2xkPTY1NTM1LGgub25tZXNzYWdlPWs9PntsZXQgeD1rLmRhdGE7YS5kYXRhP2EuZGF0YSh4KTp1LnB1c2goeCl9LGgub25vcGVuPSgpPT5hLmNvbm5lY3Q/LigpLGgub25jbG9zZT1DLGgub25lcnJvcj0oe2Vycm9yOmt9KT0+YS5lcnJvcj8uKHVlKGssImRhdGEgY2hhbm5lbCBlcnJvciIpKX0sUz1hc3luYyBoPT57bGV0IGs9bnVsbDt0cnl7YXdhaXQgUHJvbWlzZS5yYWNlKFtuZXcgUHJvbWlzZSh4PT57bGV0IG5lPSgpPT57aC5pY2VHYXRoZXJpbmdTdGF0ZT09PSJjb21wbGV0ZSImJihoLnJlbW92ZUV2ZW50TGlzdGVuZXIob3IsbmUpLHgoKSl9O2guYWRkRXZlbnRMaXN0ZW5lcihvcixuZSksbmUoKX0pLG5ldyBQcm9taXNlKHg9PntrPXNldFRpbWVvdXQoeCxSbyl9KV0pfWZpbmFsbHl7XyhrKX1yZXR1cm4gVChoKX0sUD1hc3luYygpPT57bGV0IGg9bD9UKHIpOmF3YWl0IFMocik7cmV0dXJuIEgoaCksaH07ZT8oUj1yLmNyZWF0ZURhdGFDaGFubmVsKCJkYXRhIikseShSKSk6ci5vbmRhdGFjaGFubmVsPSh7Y2hhbm5lbDpofSk9PntSPWgseShoKX07bGV0IE09YXN5bmMoaD0hMSk9PntpZihyLmNvbm5lY3Rpb25TdGF0ZSE9PSJjbG9zZWQiKXRyeXtyZXR1cm4gZz0hMCxoJiYoci5zaWduYWxpbmdTdGF0ZSE9PSJzdGFibGUiJiZyLnNpZ25hbGluZ1N0YXRlIT09ImNsb3NlZCImJnIubG9jYWxEZXNjcmlwdGlvbj8udHlwZT09PUdlJiZhd2FpdCByLnNldExvY2FsRGVzY3JpcHRpb24oe3R5cGU6InJvbGxiYWNrIn0pLHR5cGVvZiByLnJlc3RhcnRJY2U9PSJmdW5jdGlvbiImJnIucmVzdGFydEljZSgpKSxhd2FpdCByLnNldExvY2FsRGVzY3JpcHRpb24oaD9hd2FpdCByLmNyZWF0ZU9mZmVyKHtpY2VSZXN0YXJ0OiEwfSk6dm9pZCAwKSxhd2FpdCBQKCl9Y2F0Y2goayl7YS5lcnJvcj8uKHVlKGssImZhaWxlZCB0byBjcmVhdGUgbG9jYWwgb2ZmZXIiKSl9ZmluYWxseXtnPSExfX07ci5vbm5lZ290aWF0aW9ubmVlZGVkPWFzeW5jKCk9Pk0oITEpLHIub25pY2VjYW5kaWRhdGU9KHtjYW5kaWRhdGU6aH0pPT57aWYoIWx8fCFoKXJldHVybjtsZXQgaz1LKHR5cGVvZiBoLnRvSlNPTj09ImZ1bmN0aW9uIj9oLnRvSlNPTigpOntjYW5kaWRhdGU6aC5jYW5kaWRhdGUsc2RwTWlkOmguc2RwTWlkLHNkcE1MaW5lSW5kZXg6aC5zZHBNTGluZUluZGV4LHVzZXJuYW1lRnJhZ21lbnQ6aC51c2VybmFtZUZyYWdtZW50fSk7SCh7dHlwZTphbixzZHA6SlNPTi5zdHJpbmdpZnkoayl9KX07bGV0IE49KCk9PntpZihyLmNvbm5lY3Rpb25TdGF0ZT09PSJmYWlsZWQifHxyLmNvbm5lY3Rpb25TdGF0ZT09PSJjbG9zZWQifHxyLmljZUNvbm5lY3Rpb25TdGF0ZT09PSJmYWlsZWQifHxyLmljZUNvbm5lY3Rpb25TdGF0ZT09PSJjbG9zZWQiKXtDKCk7cmV0dXJufWlmKHIuY29ubmVjdGlvblN0YXRlPT09ImNvbm5lY3RlZCJ8fHIuY29ubmVjdGlvblN0YXRlPT09ImNvbm5lY3RpbmcifHxyLmljZUNvbm5lY3Rpb25TdGF0ZT09PSJjb25uZWN0ZWQifHxyLmljZUNvbm5lY3Rpb25TdGF0ZT09PSJjb21wbGV0ZWQifHxyLmljZUNvbm5lY3Rpb25TdGF0ZT09PSJjaGVja2luZyIpe3coKTtyZXR1cm59aWYoci5jb25uZWN0aW9uU3RhdGU9PT0iZGlzY29ubmVjdGVkInx8ci5pY2VDb25uZWN0aW9uU3RhdGU9PT0iZGlzY29ubmVjdGVkIil7Ynx8KGI9c2V0VGltZW91dCgoKT0+e2I9bnVsbCwoci5jb25uZWN0aW9uU3RhdGU9PT0iZGlzY29ubmVjdGVkInx8ci5pY2VDb25uZWN0aW9uU3RhdGU9PT0iZGlzY29ubmVjdGVkIikmJkMoKX0sQW8pKTtyZXR1cm59fTtyLm9uY29ubmVjdGlvbnN0YXRlY2hhbmdlPU4sci5hZGRFdmVudExpc3RlbmVyKEVvLE4pLHIub250cmFjaz1oPT57bGV0IGs9aC5zdHJlYW1zWzBdO2lmKGspe2lmKCFhLnRyYWNrJiYhYS5zdHJlYW0pe2QucHVzaCh7dHJhY2s6aC50cmFjayxzdHJlYW06a30pO3JldHVybn1hLnRyYWNrPy4oaC50cmFjayxrKSxhLnN0cmVhbT8uKGspfX0sci5vbnJlbW92ZXN0cmVhbT1oPT5hLnN0cmVhbT8uKGguc3RyZWFtKTtsZXQgcT1lP25ldyBQcm9taXNlKGg9PnYoaz0+e2sudHlwZT09PUdlJiZoKGspfSkpOlByb21pc2UucmVzb2x2ZSgpO3JldHVybiBlJiZxdWV1ZU1pY3JvdGFzaygoKT0+eyFnJiZyLnNpZ25hbGluZ1N0YXRlPT09InN0YWJsZSImJiFyLmxvY2FsRGVzY3JpcHRpb24mJnIuY29ubmVjdGlvblN0YXRlIT09ImNsb3NlZCImJnIub25uZWdvdGlhdGlvbm5lZWRlZD8uKG5ldyBFdmVudCgibmVnb3RpYXRpb25uZWVkZWQiKSl9KSx7Y3JlYXRlZDpEYXRlLm5vdygpLGNvbm5lY3Rpb246cixnZXQgY2hhbm5lbCgpe3JldHVybiBSfSxnZXQgaXNEZWFkKCl7cmV0dXJuIHIuY29ubmVjdGlvblN0YXRlPT09ImNsb3NlZCJ9LGdldE9mZmVyOmFzeW5jKGg9ITEpPT57aWYoZSlyZXR1cm4gaD9NKCEwKTpyLmxvY2FsRGVzY3JpcHRpb24/LnR5cGU9PT1HZT9sP1Qocik6UyhyKTpxfSxhc3luYyBzaWduYWwoaCl7aWYoaC50eXBlPT09ImNhbmRpZGF0ZSIpe3RyeXtsZXQgaz1KU09OLnBhcnNlKGguc2RwKTtrJiZ0eXBlb2Ygaz09Im9iamVjdCImJmF3YWl0IG0oSyhrKSl9Y2F0Y2goayl7YS5lcnJvcj8uKHVlKGssImZhaWxlZCB0byBwYXJzZSByZW1vdGUgY2FuZGlkYXRlIikpfXJldHVybn1pZighKFI/LnJlYWR5U3RhdGU9PT0ib3BlbiImJiFoLnNkcD8uaW5jbHVkZXMoImE9cnRwbWFwIikpKXRyeXtsZXQgaz17Li4uaCxzZHA6QShoLnNkcCl9O2lmKGgudHlwZT09PUdlKXtpZihnfHxyLnNpZ25hbGluZ1N0YXRlIT09InN0YWJsZSImJiFwKXtpZihlKXJldHVybjthd2FpdCBhZShbci5zZXRMb2NhbERlc2NyaXB0aW9uKHt0eXBlOiJyb2xsYmFjayJ9KSxyLnNldFJlbW90ZURlc2NyaXB0aW9uKGspXSl9ZWxzZSBhd2FpdCByLnNldFJlbW90ZURlc2NyaXB0aW9uKGspO3JldHVybiBhd2FpdCBlZSgpLGF3YWl0IHIuc2V0TG9jYWxEZXNjcmlwdGlvbigpLGF3YWl0IFAoKX1pZihoLnR5cGU9PT1Nbyl7cD0hMDt0cnl7YXdhaXQgci5zZXRSZW1vdGVEZXNjcmlwdGlvbihrKSxhd2FpdCBlZSgpfWZpbmFsbHl7cD0hMX19fWNhdGNoKGspe2EuZXJyb3I/Lih1ZShrLCJmYWlsZWQgdG8gYXBwbHkgcmVtb3RlIHNpZ25hbCIpKX19LHNlbmREYXRhOmg9PlI/LnNlbmQoaCksZGVzdHJveTooKT0+e3coKSxSPy5jbG9zZSgpLHIuY2xvc2UoKSxnPSExLHA9ITEsQygpfSxzZXRIYW5kbGVyczpoPT57bGV0e3NpZ25hbDprLC4uLnh9PWg7T2JqZWN0LmFzc2lnbihhLHgpLGEuZGF0YSYmdS5sZW5ndGg+MCYmdS5zcGxpY2UoMCkuZm9yRWFjaChuZT0+YS5kYXRhPy4obmUpKSxrJiZ2KGspLChhLnRyYWNrfHxhLnN0cmVhbSkmJmQubGVuZ3RoPjAmJmQuc3BsaWNlKDApLmZvckVhY2goKHt0cmFjazpuZSxzdHJlYW06dGV9KT0+e2EudHJhY2s/LihuZSx0ZSksYS5zdHJlYW0/Lih0ZSl9KX0sb2ZmZXJQcm9taXNlOnEsYWRkU3RyZWFtOmg9PmguZ2V0VHJhY2tzKCkuZm9yRWFjaChrPT5yLmFkZFRyYWNrKGssaCkpLHJlbW92ZVN0cmVhbTpoPT5yLmdldFNlbmRlcnMoKS5maWx0ZXIoaz0+ay50cmFjayYmaC5nZXRUcmFja3MoKS5pbmNsdWRlcyhrLnRyYWNrKSkuZm9yRWFjaChrPT5yLnJlbW92ZVRyYWNrKGspKSxhZGRUcmFjazooaCxrKT0+ci5hZGRUcmFjayhoLGspLHJlbW92ZVRyYWNrOmg9PntsZXQgaz1yLmdldFNlbmRlcnMoKS5maW5kKHg9PngudHJhY2s9PT1oKTtrJiZyLnJlbW92ZVRyYWNrKGspfSxyZXBsYWNlVHJhY2s6KGgsayk9PntsZXQgeD1yLmdldFNlbmRlcnMoKS5maW5kKG5lPT5uZS50cmFjaz09PWgpO2lmKHgpcmV0dXJuIHgucmVwbGFjZVRyYWNrKGspfX19LE9vPVsuLi5iZSgzLChlLG4pPT5gc3R1bjpzdHVuJHtufHwiIn0ubC5nb29nbGUuY29tOjE5MzAyYCksInN0dW46c3R1bi5jbG91ZGZsYXJlLmNvbTozNDc4Il0ubWFwKGU9Pih7dXJsczplfSkpO3ZhciBDbz1PYmplY3QuZ2V0UHJvdG90eXBlT2YoVWludDhBcnJheSksRm49MzIsRG89MCx6bj0zMixhcj0zNCxKbj0zNSxmbj0zNix4ZT0xNioyKioxMC1mbixaZT0yNTUsTG89NjU1MzUsaXI9ImJ1ZmZlcmVkYW1vdW50bG93Iixjcj0iY2xvc2UiLGZyPSJlcnJvciIseG89MWU0LEhvPWU9PmUgaW5zdGFuY2VvZiBBcnJheUJ1ZmZlcj9uZXcgVWludDhBcnJheShlKTpuZXcgVWludDhBcnJheShlLmJ1ZmZlcixlLmJ5dGVPZmZzZXQsZS5ieXRlTGVuZ3RoKSxfbz0oZSxuPXhvKT0+ZS5yZWFkeVN0YXRlIT09Im9wZW4ifHxlLmJ1ZmZlcmVkQW1vdW50PD1lLmJ1ZmZlcmVkQW1vdW50TG93VGhyZXNob2xkP1Byb21pc2UucmVzb2x2ZShlLnJlYWR5U3RhdGU9PT0ib3BlbiIpOm5ldyBQcm9taXNlKHQ9PntsZXQgbz0hMSxpPW51bGwscz1jPT57b3x8KG89ITAsZS5yZW1vdmVFdmVudExpc3RlbmVyKGlyLHIpLGUucmVtb3ZlRXZlbnRMaXN0ZW5lcihjcixhKSxlLnJlbW92ZUV2ZW50TGlzdGVuZXIoZnIsYSksXyhpKSx0KGMpKX0scj0oKT0+cyghMCksYT0oKT0+cyghMSk7aWYoZS5hZGRFdmVudExpc3RlbmVyKGlyLHIpLGUuYWRkRXZlbnRMaXN0ZW5lcihjcixhKSxlLmFkZEV2ZW50TGlzdGVuZXIoZnIsYSksaT1zZXRUaW1lb3V0KCgpPT5zKCExKSxuKSxlLnJlYWR5U3RhdGUhPT0ib3BlbiIpe3MoITEpO3JldHVybn1lLmJ1ZmZlcmVkQW1vdW50PD1lLmJ1ZmZlcmVkQW1vdW50TG93VGhyZXNob2xkJiZzKCEwKX0pLGxyPSh7Z2V0UGVlcjplLGdldFBlZXJJZHM6bixjYW5SZWNlaXZlRnJvbVBlZXI6dCx0aHJvd0lmQWJvcnRlZDpvfSk9PntsZXQgaT17fSxzPXt9LHI9e30sYT17fSxjPShmLGQse2luY2x1ZGVQZW5kaW5nOmc9ITF9PXt9KT0+KGY/QXJyYXkuaXNBcnJheShmKT9mOltmXTpuKGcpKS5mbGF0TWFwKHA9PntsZXQgUj1lKHAsZyk7cmV0dXJuIFI/W1Byb21pc2UucmVzb2x2ZShkKHAsUikpXTooY29uc29sZS53YXJuKGAke0d9OiBubyBwZWVyIHdpdGggaWQgJHtwfSBmb3VuZGApLFtdKX0pO3JldHVybnttYWtlSW50ZXJuYWxBY3Rpb246KGYsZD17fSk9PntsZXQgZz1zW2ZdO2lmKGlbZl0mJmcpe2xldCB3PWlbZl0ub3B0aW9ucztpZih3LnNlbmRUb1BlbmRpbmchPT0hIWQuc2VuZFRvUGVuZGluZ3x8dy5yZWNlaXZlV2hpbGVQZW5kaW5nIT09ISFkLnJlY2VpdmVXaGlsZVBlbmRpbmcpdGhyb3cgSShgYWN0aW9uIHR5cGUgIiR7Zn0iIGNhbm5vdCBiZSByZWRlZmluZWRgKTtyZXR1cm4gZ31pZighZil0aHJvdyBJKCJhY3Rpb24gdHlwZSBhcmd1bWVudCBpcyByZXF1aXJlZCIpO2xldCBwPWRlKGYpO2lmKHAuYnl0ZUxlbmd0aD5Gbil0aHJvdyBJKGBhY3Rpb24gdHlwZSBzdHJpbmcgIiR7Zn0iICgke3AuYnl0ZUxlbmd0aH1iKSBleGNlZWRzIGJ5dGUgbGltaXQgKCR7Rm59KS4gSGludDogY2hvb3NlIGEgc2hvcnRlciBuYW1lLmApO2xldCBSPXtzZW5kVG9QZW5kaW5nOiEhZC5zZW5kVG9QZW5kaW5nLHJlY2VpdmVXaGlsZVBlbmRpbmc6ISFkLnJlY2VpdmVXaGlsZVBlbmRpbmd9LGI9bmV3IFVpbnQ4QXJyYXkoRm4pO2Iuc2V0KHApO2xldCBCPTA7cmV0dXJuIGlbZl09e29uQ29tcGxldGU6VixvblByb2dyZXNzOlYsc2V0T25Db21wbGV0ZTp3PT57aVtmXS5vbkNvbXBsZXRlPXc7bGV0IEM9YVtmXTtDPy5sZW5ndGgmJihkZWxldGUgYVtmXSxDLmZvckVhY2goKHtwYXlsb2FkOkgscGVlcklkOnYsbWV0YWRhdGE6QX0pPT53KEgsdixBKSkpfSxzZXRPblByb2dyZXNzOnc9PntpW2ZdLm9uUHJvZ3Jlc3M9d30sc2VuZDphc3luYyh3LEMsSCx2LEEpPT57byhBKTtsZXQgSz10eXBlb2YgdztpZihLPT09InVuZGVmaW5lZCIpdGhyb3cgSSgiYWN0aW9uIGRhdGEgY2Fubm90IGJlIHVuZGVmaW5lZCIpO2xldCBUPUshPT0ic3RyaW5nIiwkPXcgaW5zdGFuY2VvZiBCbG9iLHo9JHx8dyBpbnN0YW5jZW9mIEFycmF5QnVmZmVyfHx3IGluc3RhbmNlb2YgQ28saj1IIT09dm9pZCAwLFc9ej9IbygkP2F3YWl0IHcuYXJyYXlCdWZmZXIoKTp3KTpkZShUP1oodyk6dyksZWU9aj9kZShaKEgpKTpudWxsLG09TWF0aC5jZWlsKFcuYnl0ZUxlbmd0aC94ZSkrKGo/MTowKXx8MSx5PWJlKG0sKFMsUCk9PntsZXQgTT1QPT09bS0xLE49ISEoaiYmUD09PTApLHE9bmV3IFVpbnQ4QXJyYXkoZm4rKE4/ZWU/LmJ5dGVMZW5ndGg/PzA6TT9XLmJ5dGVMZW5ndGgteGUqKG0tKGo/MjoxKSk6eGUpKTtyZXR1cm4gcS5zZXQoYikscS5zZXQoW0I+PjgsQiZaZV0sem4pLHEuc2V0KFtOdW1iZXIoTSl8TnVtYmVyKE4pPDwxfE51bWJlcih6KTw8MnxOdW1iZXIoVCk8PDNdLGFyKSxxLnNldChbTWF0aC5yb3VuZCgoUCsxKS9tKlplKV0sSm4pLHEuc2V0KGo/Tj9lZT8/bmV3IFVpbnQ4QXJyYXk6Vy5zdWJhcnJheSgoUC0xKSp4ZSxQKnhlKTpXLnN1YmFycmF5KFAqeGUsKFArMSkqeGUpLGZuKSxxfSk7cmV0dXJuIEI9QisxJkxvLGF3YWl0IGFlKGMoQyxhc3luYyhTLFApPT57bGV0e2NoYW5uZWw6TX09UCxOPTA7Zm9yKDtOPG07KXtvKEEpO2xldCBxPXlbTl07aWYoIXEpYnJlYWs7aWYoTSYmTS5idWZmZXJlZEFtb3VudD5NLmJ1ZmZlcmVkQW1vdW50TG93VGhyZXNob2xkKXtsZXQgeD1hd2FpdCBfbyhNKTtpZihvKEEpLCF4KWJyZWFrfWxldCBoPWUoUyxSLnNlbmRUb1BlbmRpbmcpO2lmKCFofHxoIT09UClicmVhaztQLnNlbmREYXRhKHEpLE4rKztsZXQgaz1xW0puXT8/WmU7dj8uKGsvWmUsUyxIKX19LHtpbmNsdWRlUGVuZGluZzpSLnNlbmRUb1BlbmRpbmd9KSksW119LG9wdGlvbnM6Un0sc1tmXT17c2VuZDppW2ZdLnNlbmQsb25NZXNzYWdlOmlbZl0uc2V0T25Db21wbGV0ZSxvblByb2dyZXNzOmlbZl0uc2V0T25Qcm9ncmVzc319LGhhbmRsZURhdGE6KGYsZCk9PntsZXQgZz1uZXcgVWludDhBcnJheShkKSxwPWdlKGcuc3ViYXJyYXkoRG8sem4pKS5yZXBsYWNlQWxsKCJcMCIsIiIpLFI9aVtwXTtpZighdChmLCEhUj8ub3B0aW9ucy5yZWNlaXZlV2hpbGVQZW5kaW5nKSlyZXR1cm47bGV0IGI9KGdbem5dPz8wKTw8OHwoZ1szM10/PzApLEI9Z1thcl0/PzAsdz1nW0puXT8/MCxDPWcuc3ViYXJyYXkoZm4pLEg9ISEoQiYxKSx2PSEhKEImMiksQT0hIShCJjQpLEs9ISEoQiY4KTtyW2ZdPz89e30scltmXVtwXT8/PXt9O2xldCBUPXJbZl1bcF1bYl0/Pz17Y2h1bmtzOltdfTtpZih2P1QubWV0YT1oZShnZShDKSk6VC5jaHVua3MucHVzaChDKSxSPy5vblByb2dyZXNzKHcvWmUsZixULm1ldGEpLCFIKXJldHVybjtsZXQgJD1uZXcgVWludDhBcnJheShULmNodW5rcy5yZWR1Y2UoKGosVyk9PmorVy5ieXRlTGVuZ3RoLDApKTtULmNodW5rcy5yZWR1Y2UoKGosVyk9PigkLnNldChXLGopLGorVy5ieXRlTGVuZ3RoKSwwKSxkZWxldGUgcltmXVtwXVtiXTtsZXQgej1BPyQ6Sz9oZShnZSgkKSk6Z2UoJCk7aWYoUil7Ui5vbkNvbXBsZXRlKHosZixULm1ldGEpO3JldHVybn0oYVtwXT8/PVtdKS5wdXNoKHtwYXlsb2FkOnoscGVlcklkOmYsLi4uVC5tZXRhPT09dm9pZCAwP3t9OnttZXRhZGF0YTpULm1ldGF9fSl9LGNsZWFyUGVlcjpmPT57ZGVsZXRlIHJbZl19fX07dmFyIElvPTUwMCxLZT0oZSxuKT0+e2xldCB0PUkobik7cmV0dXJuIHQua2luZD1lLHQubmFtZT1lPT09ImFib3J0ZWQiPyJBYm9ydEVycm9yIjp0Lm5hbWUsdH0sVm49ZT0+e2lmKGU/LmFib3J0ZWQpdGhyb3cgS2UoImFib3J0ZWQiLCJvcGVyYXRpb24gYWJvcnRlZCIpfSx1cj1lPT5lJiZ0eXBlb2YgZT09Im9iamVjdCImJiFBcnJheS5pc0FycmF5KGUpJiZ0eXBlb2YgZS5yPT0ic3RyaW5nIj97cjplLnIsLi4uT2JqZWN0Lmhhc093bihlLCJtIik/e206ZS5tfTp7fX06bnVsbCxObz1lPT5lJiZ0eXBlb2YgZT09Im9iamVjdCImJiFBcnJheS5pc0FycmF5KGUpJiZ0eXBlb2YgZS5yPT0ic3RyaW5nIj97cjplLnIsLi4udHlwZW9mIGUuZT09InN0cmluZyI/e2U6ZS5lfTp7fX06bnVsbCxsbj0oZSxuKT0+bj09PXZvaWQgMD9lOnsuLi5lLG1ldGFkYXRhOm59LGRyPSh7Z2V0UGVlcjplLGdldFBlZXJJZHM6bixjYW5SZWNlaXZlRnJvbVBlZXI6dH0pPT57bGV0IG89e30saT17fSxzPWxyKHtnZXRQZWVyOmUsZ2V0UGVlcklkczpuLGNhblJlY2VpdmVGcm9tUGVlcjp0LHRocm93SWZBYm9ydGVkOlZufSkscj1zLm1ha2VJbnRlcm5hbEFjdGlvbixhPXMuaGFuZGxlRGF0YSxjPWc9PntsZXQgcD1pW2ddO3AmJihfKHAudGltZXIpLHAuc2lnbmFsJiZwLmFib3J0SGFuZGxlciYmcC5zaWduYWwucmVtb3ZlRXZlbnRMaXN0ZW5lcigiYWJvcnQiLHAuYWJvcnRIYW5kbGVyKSxkZWxldGUgaVtnXSl9LHU9KGcscCk9PnttZShpKS5mb3JFYWNoKChbUixiXSk9PntiLnBlZXJJZD09PWcmJihjKFIpLGIucmVqZWN0KHApKX0pfSxsPShnLHApPT57cy5jbGVhclBlZXIoZyksdShnLEtlKCJkaXNjb25uZWN0ZWQiLFBlKHAsInBlZXIgZGlzY29ubmVjdGVkIikpKX0sZj1yKCJAX3Jlc3BvbnNlIik7cmV0dXJuIGYub25NZXNzYWdlKChnLHAsUik9PntsZXQgYj1ObyhSKTtpZighYilyZXR1cm47bGV0IEI9aVtiLnJdO2lmKCEoIUJ8fEIucGVlcklkIT09cCkpe2lmKGMoYi5yKSxiLmUhPT12b2lkIDApe0IucmVqZWN0KEtlKCJyZWplY3RlZCIsYi5lKSk7cmV0dXJufUIucmVzb2x2ZShnKX19KSx7bWFrZUFjdGlvbjooZyxwKT0+e2lmKHAmJiJvblJlcXVlc3QiaW4gcCYmcC5raW5kIT09InJlcXVlc3QiKXRocm93IEkoJ3JlcXVlc3QgYWN0aW9ucyBtdXN0IHVzZSBraW5kOiAicmVxdWVzdCInKTtsZXQgUj1wPy5raW5kPz8ibWVzc2FnZSIsYj1yKGcpLEI9b1tnXTtpZihCKXtpZihCLmtpbmQhPT1SKXRocm93IEkoYGFjdGlvbiB0eXBlICIke2d9IiBjYW5ub3QgYmUgcmVkZWZpbmVkYCk7cmV0dXJuIEIuYWN0aW9ufWxldCB3PXtraW5kOlIsYWN0aW9uOm51bGwscGVuZGluZ01lc3NhZ2VzOltdLHBlbmRpbmdSZXF1ZXN0czpbXSxvblJlY2VpdmVQcm9ncmVzczpwPy5vblJlY2VpdmVQcm9ncmVzcz8/bnVsbH0sQz0obSx5KT0+bT8oUyxQKT0+bShTLGxuKHtwZWVySWQ6UH0seSkpOnZvaWQgMCxIPW09Pnt3Lm9uUmVjZWl2ZVByb2dyZXNzPW19LHY9KG0seSxTKT0+e2xldCBQPXcua2luZD09PSJyZXF1ZXN0Ij91cihTKTpudWxsO3cub25SZWNlaXZlUHJvZ3Jlc3M/LihtLGxuKHtwZWVySWQ6eX0sUD9QLm06UykpfTtpZihiLm9uUHJvZ3Jlc3ModiksUj09PSJtZXNzYWdlIil7bGV0IG09cD8ub25NZXNzYWdlPz9udWxsLHk9KCk9PntpZighbSlyZXR1cm47bGV0IFA9bTt3LnBlbmRpbmdNZXNzYWdlcy5zcGxpY2UoMCkuZm9yRWFjaCgoe3BheWxvYWQ6TSxwZWVySWQ6TixtZXRhZGF0YTpxfSk9PntQcm9taXNlLnJlc29sdmUoKS50aGVuKCgpPT5QKE0sbG4oe3BlZXJJZDpOfSxxKSkpLmNhdGNoKGg9PmNvbnNvbGUuZXJyb3IoYCR7R30gYWN0aW9uIGhhbmRsZXIgZXJyb3I6YCxoKSl9KX0sUz17c2VuZDphc3luYyhQLE09e30pPT57YXdhaXQgYi5zZW5kKFAsTS50YXJnZXQsTS5tZXRhZGF0YSxDKE0ub25Qcm9ncmVzcyxNLm1ldGFkYXRhKSxNLnNpZ25hbCl9LGdldCBvbk1lc3NhZ2UoKXtyZXR1cm4gbX0sc2V0IG9uTWVzc2FnZShQKXttPVAseSgpfSxnZXQgb25SZWNlaXZlUHJvZ3Jlc3MoKXtyZXR1cm4gdy5vblJlY2VpdmVQcm9ncmVzc30sc2V0IG9uUmVjZWl2ZVByb2dyZXNzKFApe0goUCl9fTtyZXR1cm4gYi5vbk1lc3NhZ2UoKFAsTSxOKT0+e2lmKCFtKXt3LnBlbmRpbmdNZXNzYWdlcy5wdXNoKE49PT12b2lkIDA/e3BheWxvYWQ6UCxwZWVySWQ6TX06e3BheWxvYWQ6UCxwZWVySWQ6TSxtZXRhZGF0YTpOfSk7cmV0dXJufWxldCBxPW07UHJvbWlzZS5yZXNvbHZlKCkudGhlbigoKT0+cShQLGxuKHtwZWVySWQ6TX0sTikpKS5jYXRjaChoPT5jb25zb2xlLmVycm9yKGAke0d9IGFjdGlvbiBoYW5kbGVyIGVycm9yOmAsaCkpfSksdy5hY3Rpb249UyxvW2ddPXcseSgpLFN9bGV0IEE9cD8ub25SZXF1ZXN0Pz9udWxsLEs9bT0+e18obS50aW1lcik7bGV0IHk9dy5wZW5kaW5nUmVxdWVzdHMuaW5kZXhPZihtKTt5Pi0xJiZ3LnBlbmRpbmdSZXF1ZXN0cy5zcGxpY2UoeSwxKX0sVD0obSx5LFMpPT57Zi5zZW5kKG51bGwsbSx7cjp5LGU6UGUoUywicmVxdWVzdCBmYWlsZWQiKX0pfSwkPShtLHkpPT57SyhtKSxQcm9taXNlLnJlc29sdmUoKS50aGVuKCgpPT55KG0ucGF5bG9hZCx7cGVlcklkOm0ucGVlcklkLC4uLm0ubWV0YWRhdGE9PT12b2lkIDA/e306e21ldGFkYXRhOm0ubWV0YWRhdGF9LHNpZ25hbDptLmNvbnRyb2xsZXIuc2lnbmFsfSkpLnRoZW4oYXN5bmMgUz0+e2lmKFM9PT12b2lkIDApdGhyb3cgSSgicmVxdWVzdCBoYW5kbGVyIHJldHVybmVkIHVuZGVmaW5lZCIpO2F3YWl0IGYuc2VuZChTLG0ucGVlcklkLHtyOm0ucmVxdWVzdElkfSl9KS5jYXRjaChTPT5UKG0ucGVlcklkLG0ucmVxdWVzdElkLFMpKS5maW5hbGx5KCgpPT5tLmNvbnRyb2xsZXIuYWJvcnQoKSl9LHo9KCk9PntBJiZ3LnBlbmRpbmdSZXF1ZXN0cy5zbGljZSgpLmZvckVhY2gobT0+JChtLEEpKX0saj0obSx5LFMsUCk9PntpZihBKXtsZXQgTj17cGF5bG9hZDptLHBlZXJJZDp5LC4uLlM9PT12b2lkIDA/e306e21ldGFkYXRhOlN9LHJlcXVlc3RJZDpQLGNvbnRyb2xsZXI6bmV3IEFib3J0Q29udHJvbGxlcix0aW1lcjpudWxsfTskKE4sQSk7cmV0dXJufWxldCBNPXtwYXlsb2FkOm0scGVlcklkOnksLi4uUz09PXZvaWQgMD97fTp7bWV0YWRhdGE6U30scmVxdWVzdElkOlAsY29udHJvbGxlcjpuZXcgQWJvcnRDb250cm9sbGVyLHRpbWVyOnNldFRpbWVvdXQoKCk9PntLKE0pLE0uY29udHJvbGxlci5hYm9ydCgpLFQoeSxQLCJyZXF1ZXN0IGhhbmRsZXIgdW5hdmFpbGFibGUiKX0sSW8pfTt3LnBlbmRpbmdSZXF1ZXN0cy5wdXNoKE0pfSxXPWFzeW5jKG0seSk9PntsZXR7dGFyZ2V0OlMsbWV0YWRhdGE6UCxvblByb2dyZXNzOk0sc2lnbmFsOk4sdGltZW91dE1zOnF9PXk7aWYoVm4oTiksIWUoUywhMSkpdGhyb3cgS2UoImRpc2Nvbm5lY3RlZCIsYG5vIGFjdGl2ZSBwZWVyIHdpdGggaWQgJHtTfWApO2xldCBoPWxlKDIwKSxrPW5ldyBQcm9taXNlKCh4LG5lKT0+e2xldCB0ZT17cGVlcklkOlMscmVzb2x2ZTp4LHJlamVjdDpuZSx0aW1lcjpudWxsLC4uLk49PT12b2lkIDA/e306e3NpZ25hbDpOfX0sJGU9KCk9PntjKGgpLG5lKEtlKCJhYm9ydGVkIiwib3BlcmF0aW9uIGFib3J0ZWQiKSl9O04mJih0ZS5hYm9ydEhhbmRsZXI9JGUsTi5hZGRFdmVudExpc3RlbmVyKCJhYm9ydCIsJGUse29uY2U6ITB9KSksaVtoXT10ZX0pLmNhdGNoKHg9Pnt0aHJvdyB4fSk7dHJ5e2F3YWl0IGIuc2VuZChtLFMsUD09PXZvaWQgMD97cjpofTp7cjpoLG06UH0sQyhNLFApLE4pO2xldCB4PWlbaF07cmV0dXJuIHgmJnEhPT12b2lkIDAmJih4LnRpbWVyPXNldFRpbWVvdXQoKCk9PntjKGgpLHgucmVqZWN0KEtlKCJ0aW1lb3V0IiwicmVxdWVzdCB0aW1lZCBvdXQiKSl9LHEpKSxhd2FpdCBrfWNhdGNoKHgpe3Rocm93IGMoaCkseH19LGVlPXtyZXF1ZXN0OlcscmVxdWVzdE1hbnk6YXN5bmMobSx5KT0+KFZuKHkuc2lnbmFsKSxhd2FpdCBhZSh5LnRhcmdldHMubWFwKGFzeW5jIFM9Pnt0cnl7bGV0IFA9e3BlZXJJZDpTLHN0YXR1czoiZnVsZmlsbGVkIix2YWx1ZTphd2FpdCBXKG0se3RhcmdldDpTLC4uLnkubWV0YWRhdGE9PT12b2lkIDA/e306e21ldGFkYXRhOnkubWV0YWRhdGF9LC4uLnkudGltZW91dE1zPT09dm9pZCAwP3t9Ont0aW1lb3V0TXM6eS50aW1lb3V0TXN9LC4uLnkub25Qcm9ncmVzcz09PXZvaWQgMD97fTp7b25Qcm9ncmVzczp5Lm9uUHJvZ3Jlc3N9LC4uLnkuc2lnbmFsPT09dm9pZCAwP3t9OntzaWduYWw6eS5zaWduYWx9fSl9O3JldHVybiB5Lm9uUmVzdWx0Py4oUCksUH1jYXRjaChQKXtsZXQgTT11ZShQLCJyZXF1ZXN0IGZhaWxlZCIpO2lmKE0ua2luZD09PSJhYm9ydGVkInx8IU0ua2luZCl0aHJvdyBNO2xldCBOPU0ua2luZD09PSJ0aW1lb3V0Ij97cGVlcklkOlMsc3RhdHVzOiJ0aW1lb3V0In06TS5raW5kPT09ImRpc2Nvbm5lY3RlZCI/e3BlZXJJZDpTLHN0YXR1czoiZGlzY29ubmVjdGVkIn06e3BlZXJJZDpTLHN0YXR1czoicmVqZWN0ZWQiLGVycm9yOk19O3JldHVybiB5Lm9uUmVzdWx0Py4oTiksTn19KSkpLGdldCBvblJlcXVlc3QoKXtyZXR1cm4gQX0sc2V0IG9uUmVxdWVzdChtKXtBPW0seigpfSxnZXQgb25SZWNlaXZlUHJvZ3Jlc3MoKXtyZXR1cm4gdy5vblJlY2VpdmVQcm9ncmVzc30sc2V0IG9uUmVjZWl2ZVByb2dyZXNzKG0pe0gobSl9fTtyZXR1cm4gYi5vbk1lc3NhZ2UoKG0seSxTKT0+e2xldCBQPXVyKFMpO1AmJmoobSx5LFAubSxQLnIpfSksdy5hY3Rpb249ZWUsb1tnXT13LHooKSxlZX0sbWFrZUludGVybmFsQWN0aW9uOnIsaGFuZGxlRGF0YTphLGNsZWFyUGVlcjpsfX07dmFyIG1yPWU9PmUmJnR5cGVvZiBlPT0ib2JqZWN0IiYmIUFycmF5LmlzQXJyYXkoZSkmJnR5cGVvZiBlLms9PSJzdHJpbmciP3trZXk6ZS5rLC4uLnR5cGVvZiBlLnM9PSJzdHJpbmciP3tzdHJlYW1JZDplLnN9Ont9LC4uLnR5cGVvZiBlLnQ9PSJzdHJpbmciP3t0cmFja0lkOmUudH06e30sLi4uT2JqZWN0Lmhhc093bihlLCJtIik/e21ldGFkYXRhOmUubX06e319Om51bGwsZ3I9ZT0+bj0+e2xldCB0PWUuZ2V0KG4pO3JldHVybiB0fHwodD1sZSgyMCksZS5zZXQobix0KSksdH0sR249KCk9PntsZXQgZT1uZXcgV2Vha01hcCxuPW5ldyBXZWFrTWFwLHQ9bmV3IE1hcCxvPW5ldyBNYXAsaT1uZXcgTWFwLHM9bmV3IE1hcDtyZXR1cm57Z2V0U3RyZWFtS2V5OmdyKGUpLGdldFRyYWNrS2V5OmdyKG4pLHJlbWVtYmVyUmVtb3RlU3RyZWFtOihyLGEsYyk9Pnt0LnNldChyLGEpLGMmJm8uc2V0KGMsYSl9LGdldFJlbW90ZVN0cmVhbToocixhKT0+dC5nZXQocik/PyhhP28uZ2V0KGEpOnZvaWQgMCkscmVtZW1iZXJSZW1vdGVUcmFjazoocixhLGMsdSxsKT0+e2xldCBmPXt0cmFjazphLHN0cmVhbTpjfTtpLnNldChyLGYpLHUmJnMuc2V0KHUsZiksbCYmby5zZXQobCxjKX0sZ2V0UmVtb3RlVHJhY2s6KHIsYSk9PmkuZ2V0KHIpPz8oYT9zLmdldChhKTp2b2lkIDApLGNsZWFyUmVtb3RlOigpPT57dC5jbGVhcigpLG8uY2xlYXIoKSxpLmNsZWFyKCkscy5jbGVhcigpfX19LGhyPSh7aXRlcmF0ZTplLGlzQWN0aXZlOm4sZ2V0U2hhcmVkTWVkaWFQZWVyOnR9KT0+e2xldCBvPXt9LGk9e30scz1HbigpLHI9e29uUGVlclN0cmVhbTpudWxsLG9uUGVlclRyYWNrOm51bGx9LGE9KGwsZixkLGcpPT57bihsKSYmKHQobCk/Ll9fdHJ5c3Rlcm9NZWRpYT8ucmVtZW1iZXJSZW1vdGVTdHJlYW0oZixkLHR5cGVvZiBkLmlkPT0ic3RyaW5nIj9kLmlkOnZvaWQgMCksci5vblBlZXJTdHJlYW0/LihkLGwsZykpfSxjPShsLGYsZCxnLHApPT57bihsKSYmKHQobCk/Ll9fdHJ5c3Rlcm9NZWRpYT8ucmVtZW1iZXJSZW1vdGVUcmFjayhmLGQsZyx0eXBlb2YgZC5pZD09InN0cmluZyI/ZC5pZDp2b2lkIDAsdHlwZW9mIGcuaWQ9PSJzdHJpbmciP2cuaWQ6dm9pZCAwKSxyLm9uUGVlclRyYWNrPy4oZCxnLGwscCkpfSx1PShsLGYsZCxnLHAsUj17fSk9PntsZXQgYj17azpmLC4uLlIsLi4uZD09PXZvaWQgMD97fTp7bTpkfX07cmV0dXJuIGUobCxhc3luYyhCLHcpPT57YXdhaXQgZyhiLEIpLHAodyl9KX07cmV0dXJue2FkZFN0cmVhbToobCxmLGQpPT51KGYudGFyZ2V0LHMuZ2V0U3RyZWFtS2V5KGwpLGYubWV0YWRhdGEsZCxnPT5nLmFkZFN0cmVhbShsKSx7czpsLmlkfSkscmVtb3ZlU3RyZWFtOihsLGYpPT57ZShmLChkLGcpPT5nLnJlbW92ZVN0cmVhbShsKSl9LGFkZFRyYWNrOihsLGYsZCxnKT0+dShkLnRhcmdldCxzLmdldFRyYWNrS2V5KGwpLGQubWV0YWRhdGEsZyxwPT5wLmFkZFRyYWNrKGwsZikse3M6Zi5pZCx0OmwuaWR9KSxyZW1vdmVUcmFjazoobCxmKT0+e2UoZiwoZCxnKT0+Zy5yZW1vdmVUcmFjayhsKSl9LHJlcGxhY2VUcmFjazoobCxmLGQsZyk9PnUoZC50YXJnZXQscy5nZXRUcmFja0tleShmKSxkLm1ldGFkYXRhLGcscD0+cC5yZXBsYWNlVHJhY2sobCxmKSx7dDpsLmlkfSkscmVjZWl2ZVN0cmVhbU1ldGE6KGwsZik9PntpZighbihmKSlyZXR1cm47bGV0IGQ9bXIobCk7aWYoIWQpcmV0dXJuO2xldCBnPXQoZik/Ll9fdHJ5c3Rlcm9NZWRpYT8uZ2V0UmVtb3RlU3RyZWFtKGQua2V5LGQuc3RyZWFtSWQpO2lmKGcpe2EoZixkLmtleSxnLGQubWV0YWRhdGEpO3JldHVybn0ob1tmXT8/PVtdKS5wdXNoKGQpfSxyZWNlaXZlVHJhY2tNZXRhOihsLGYpPT57aWYoIW4oZikpcmV0dXJuO2xldCBkPW1yKGwpO2lmKCFkKXJldHVybjtsZXQgZz10KGYpPy5fX3RyeXN0ZXJvTWVkaWE/LmdldFJlbW90ZVRyYWNrKGQua2V5LGQudHJhY2tJZCk7aWYoZyl7YyhmLGQua2V5LGcudHJhY2ssZy5zdHJlYW0sZC5tZXRhZGF0YSk7cmV0dXJufShpW2ZdPz89W10pLnB1c2goZCl9LHJlY2VpdmVSZW1vdGVTdHJlYW06KGwsZik9PntpZighbihsKSlyZXR1cm47bGV0IGQ9b1tsXT8uc2hpZnQoKTtkJiZhKGwsZC5rZXksZixkLm1ldGFkYXRhKX0scmVjZWl2ZVJlbW90ZVRyYWNrOihsLGYsZCk9PntpZighbihsKSlyZXR1cm47bGV0IGc9aVtsXT8uc2hpZnQoKTtnJiZjKGwsZy5rZXksZixkLGcubWV0YWRhdGEpfSxjbGVhclBlZXI6bD0+e2RlbGV0ZSBvW2xdLGRlbGV0ZSBpW2xdfSxnZXQgb25QZWVyU3RyZWFtKCl7cmV0dXJuIHIub25QZWVyU3RyZWFtfSxzZXQgb25QZWVyU3RyZWFtKGwpe3Iub25QZWVyU3RyZWFtPWx9LGdldCBvblBlZXJUcmFjaygpe3JldHVybiByLm9uUGVlclRyYWNrfSxzZXQgb25QZWVyVHJhY2sobCl7ci5vblBlZXJUcmFjaz1sfX19O3ZhciBwcj0iYmVmb3JldW5sb2FkIixVbz0xZTQsUmU9ZT0+IkBfIitlLFhlPW5ldyBTZXQseXI9KCk9PlhlLmZvckVhY2goZT0+ZSgpKSxLbz1lPT4oWGUuYWRkKGUpLFhlLnNpemU9PT0xJiZhZGRFdmVudExpc3RlbmVyKHByLHlyKSwoKT0+e1hlLmRlbGV0ZShlKSxYZS5zaXplfHxyZW1vdmVFdmVudExpc3RlbmVyKHByLHlyKX0pLHdyPShlLG4sdCx7b25QZWVySGFuZHNoYWtlOm8sb25IYW5kc2hha2VFcnJvcjppLGhhbmRzaGFrZVRpbWVvdXRNczpzPVVvLGlzUGFzc2l2ZTpyPSExfT17fSk9PntsZXQgYT17fSxjPXt9LHU9e30sbD17b25QZWVySm9pbjpudWxsLG9uUGVlckxlYXZlOm51bGx9LGY9VixkPW51bGwsZz0obSx5LHtpbmNsdWRlUGVuZGluZzpTPSExfT17fSk9PihtP0FycmF5LmlzQXJyYXkobSk/bTpbbV06UShTP2E6YykpLmZsYXRNYXAoUD0+e2xldCBNPVM/YVtQXTpjW1BdO3JldHVybiBNP1tQcm9taXNlLnJlc29sdmUoeShQLE0pKV06KGNvbnNvbGUud2FybihgJHtHfTogbm8gcGVlciB3aXRoIGlkICR7UH0gZm91bmRgKSxbXSl9KSxwPWhyKHtpdGVyYXRlOihtLHkpPT5nKG0sKFMsUCk9PnkoUyxQKSksaXNBY3RpdmU6bT0+ISFjW21dLGdldFNoYXJlZE1lZGlhUGVlcjptPT5hW21dPz9udWxsfSksUj1kcih7Z2V0UGVlcjoobSx5KT0+KHk/YTpjKVttXSxnZXRQZWVySWRzOm09PlEobT9hOmMpLGNhblJlY2VpdmVGcm9tUGVlcjoobSx5KT0+ISFkPy5jYW5SZWNlaXZlRnJvbVBlZXIobSx5KX0pLGI9Ui5tYWtlSW50ZXJuYWxBY3Rpb24sQj1SLmhhbmRsZURhdGEsdz1SLm1ha2VBY3Rpb24sQz0obSx5PUkoInBlZXIgZGlzY29ubmVjdGVkIikpPT57bGV0IFM9dWUoeSwicGVlciBkaXNjb25uZWN0ZWQiKTtkPy5jbGVhclBlZXIobSxTKSxkZWxldGUgYVttXSxkZWxldGUgY1ttXSxSLmNsZWFyUGVlcihtLFMpLHVbbV0/LnNwbGljZSgwKS5mb3JFYWNoKFA9PlAucmVqZWN0KFMpKSxkZWxldGUgdVttXSxwLmNsZWFyUGVlcihtKX0sSD0obSx5LFMpPT57bGV0IFA9YVttXTtpZighUHx8eSYmUCE9PXkpcmV0dXJuO2xldCBNPSEhY1ttXTtDKG0sUyksUC5kZXN0cm95KCksTSYmbC5vblBlZXJMZWF2ZT8uKG0pLG4obSl9LHY9YXN5bmMoKT0+e2F3YWl0IGouc2VuZCgiIiksYXdhaXQgbmV3IFByb21pc2UobT0+c2V0VGltZW91dChtLDk5KSksbWUoYSkuZm9yRWFjaCgoW20seV0pPT57eS5kZXN0cm95KCksQyhtLEkoInJvb20gbGVmdCIpKX0pLGYoKSx0KCl9LEE9YihSZSgicGluZyIpKSxLPWIoUmUoInBvbmciKSksVD1iKFJlKCJzaWduYWwiKSksJD1iKFJlKCJzdHJlYW0iKSksej1iKFJlKCJ0cmFjayIpKSxqPWIoUmUoImxlYXZlIikse3NlbmRUb1BlbmRpbmc6ITAscmVjZWl2ZVdoaWxlUGVuZGluZzohMH0pLFc9YihSZSgiaHNkYXRhIikse3NlbmRUb1BlbmRpbmc6ITAscmVjZWl2ZVdoaWxlUGVuZGluZzohMH0pLGVlPWIoUmUoImhzcmVhZHkiKSx7c2VuZFRvUGVuZGluZzohMCxyZWNlaXZlV2hpbGVQZW5kaW5nOiEwfSk7cmV0dXJuIGQ9cnIoey4uLm89PT12b2lkIDA/e306e29uUGVlckhhbmRzaGFrZTpvfSwuLi5pPT09dm9pZCAwP3t9OntvbkhhbmRzaGFrZUVycm9yOml9LGhhbmRzaGFrZVRpbWVvdXRNczpzLHNlbmRIYW5kc2hha2VEYXRhOlcuc2VuZCxzZW5kSGFuZHNoYWtlUmVhZHk6ZWUuc2VuZCxvbkFjdGl2YXRlOihtLHkpPT57Y1ttXT15LGwub25QZWVySm9pbj8uKG0pfSxvbkZhaWx1cmU6KG0seSxTKT0+SChtLHksUyl9KSxBLm9uTWVzc2FnZSgobSx5KT0+Sy5zZW5kKCIiLHkpKSxLLm9uTWVzc2FnZSgobSx5KT0+e2xldCBTPXVbeV07Uz8uc2hpZnQoKT8ucmVzb2x2ZSgpLFMmJiFTLmxlbmd0aCYmZGVsZXRlIHVbeV19KSxULm9uTWVzc2FnZSgobSx5KT0+e2NbeV0mJmFbeV0/LnNpZ25hbChtKX0pLCQub25NZXNzYWdlKChtLHkpPT5wLnJlY2VpdmVTdHJlYW1NZXRhKG0seSkpLHoub25NZXNzYWdlKChtLHkpPT5wLnJlY2VpdmVUcmFja01ldGEobSx5KSksai5vbk1lc3NhZ2UoKG0seSk9PkgoeSx2b2lkIDAsSSgicGVlciBsZWZ0IHJvb20iKSkpLFcub25NZXNzYWdlKChtLHksUyk9PmQ/LnJlY2VpdmVIYW5kc2hha2VEYXRhKG0seSxTKSksZWUub25NZXNzYWdlKChtLHkpPT5kPy5yZWNlaXZlSGFuZHNoYWtlUmVhZHkoeSkpLGUoKG0seSk9PntsZXQgUz1hW3ldO2lmKFMpe2lmKFM9PT1tKXJldHVybjtTLmRlc3Ryb3koKSxDKHksSSgicGVlciByZXBsYWNlZCIpKX1hW3ldPW0sZD8uYWRkUGVlcih5LG0pLG0uc2V0SGFuZGxlcnMoe2RhdGE6UD0+Qih5LFApLHN0cmVhbTpQPT5wLnJlY2VpdmVSZW1vdGVTdHJlYW0oeSxQKSx0cmFjazooUCxNKT0+cC5yZWNlaXZlUmVtb3RlVHJhY2soeSxQLE0pLHNpZ25hbDpQPT57Y1t5XSYmVC5zZW5kKFAseSl9LGNsb3NlOigpPT5IKHksbSxJKCJwZWVyIGRpc2Nvbm5lY3RlZCIpKSxlcnJvcjpQPT57Y29uc29sZS5lcnJvcihgJHtHfSBwZWVyIGVycm9yOmAsUCksSCh5LG0sUCl9fSksZD8uc3RhcnQoeSxtKX0pLEhuJiYoZj1LbygoKT0+digpLmNhdGNoKFYpKSkse21ha2VBY3Rpb246dyxsZWF2ZTp2LHBpbmc6YXN5bmMgbT0+e2lmKCFjW21dKXRocm93IEkoYG5vIGFjdGl2ZSBwZWVyIHdpdGggaWQgJHttfWApO2xldCB5PURhdGUubm93KCk7cmV0dXJuIGF3YWl0IG5ldyBQcm9taXNlKChTLFApPT57bGV0IE09dVttXT8/PVtdLE49KCk9PntsZXQgaD11W21dO2lmKCFoKXJldHVybjtsZXQgaz1oLmluZGV4T2YocSk7az4tMSYmaC5zcGxpY2UoaywxKSxoLmxlbmd0aHx8ZGVsZXRlIHVbbV19LHE9e3Jlc29sdmU6KCk9PntOKCksUygpfSxyZWplY3Q6aD0+e04oKSxQKGgpfX07TS5wdXNoKHEpLEEuc2VuZCgiIixtKS5jYXRjaChoPT5xLnJlamVjdCh1ZShoLCJwZWVyIGRpc2Nvbm5lY3RlZCIpKSl9KSxEYXRlLm5vdygpLXl9LGlzUGFzc2l2ZTooKT0+cixnZXRQZWVyczooKT0+X24obWUoYykubWFwKChbbSx5XSk9PlttLHkuY29ubmVjdGlvbl0pKSxhZGRTdHJlYW06KG0seT17fSk9PnAuYWRkU3RyZWFtKG0seSwkLnNlbmQpLHJlbW92ZVN0cmVhbToobSx5PXt9KT0+e3AucmVtb3ZlU3RyZWFtKG0seS50YXJnZXQpfSxhZGRUcmFjazoobSx5LFM9e30pPT5wLmFkZFRyYWNrKG0seSxTLHouc2VuZCkscmVtb3ZlVHJhY2s6KG0seT17fSk9PntwLnJlbW92ZVRyYWNrKG0seS50YXJnZXQpfSxyZXBsYWNlVHJhY2s6KG0seSxTPXt9KT0+cC5yZXBsYWNlVHJhY2sobSx5LFMsei5zZW5kKSxnZXQgb25QZWVySm9pbigpe3JldHVybiBsLm9uUGVlckpvaW59LHNldCBvblBlZXJKb2luKG0pe2wub25QZWVySm9pbj1tLG0mJlEoYykuZm9yRWFjaCh5PT5tKHkpKX0sZ2V0IG9uUGVlckxlYXZlKCl7cmV0dXJuIGwub25QZWVyTGVhdmV9LHNldCBvblBlZXJMZWF2ZShtKXtsLm9uUGVlckxlYXZlPW19LGdldCBvblBlZXJTdHJlYW0oKXtyZXR1cm4gcC5vblBlZXJTdHJlYW19LHNldCBvblBlZXJTdHJlYW0obSl7cC5vblBlZXJTdHJlYW09bX0sZ2V0IG9uUGVlclRyYWNrKCl7cmV0dXJuIHAub25QZWVyVHJhY2t9LHNldCBvblBlZXJUcmFjayhtKXtwLm9uUGVlclRyYWNrPW19fX07dmFyIGtyPTEsdnI9MixQcj0oZSxuKT0+e2xldCB0PWRlKGUpLG89bmV3IFVpbnQ4QXJyYXkoMyt0LmJ5dGVMZW5ndGgrbi5ieXRlTGVuZ3RoKTtyZXR1cm4gb1swXT1rcixvWzFdPXQuYnl0ZUxlbmd0aD4+PjgmMjU1LG9bMl09dC5ieXRlTGVuZ3RoJjI1NSxvLnNldCh0LDMpLG8uc2V0KG4sMyt0LmJ5dGVMZW5ndGgpLG99LGpvPShlLG4pPT57bGV0IHQ9ZGUoZSksbz1uZXcgVWludDhBcnJheSg0K3QuYnl0ZUxlbmd0aCk7cmV0dXJuIG9bMF09dnIsb1sxXT1OdW1iZXIobiksb1syXT10LmJ5dGVMZW5ndGg+Pj44JjI1NSxvWzNdPXQuYnl0ZUxlbmd0aCYyNTUsby5zZXQodCw0KSxvfSxxbz1lPT57bGV0IG49bmV3IFVpbnQ4QXJyYXkoZSk7aWYobi5ieXRlTGVuZ3RoPDMpcmV0dXJuIG51bGw7aWYoblswXT09PWtyKXtsZXQgaT0oblsxXT8/MCk8PDh8KG5bMl0/PzApLHM9MytpO3JldHVybiBpPD0wfHxuLmJ5dGVMZW5ndGg8cz9udWxsOnt0eXBlOiJyb29tIixyb29tVG9rZW46Z2Uobi5zdWJhcnJheSgzLHMpKSxwYXlsb2FkOm4uc3ViYXJyYXkocykuc2xpY2UoKS5idWZmZXJ9fWlmKG5bMF0hPT12cnx8bi5ieXRlTGVuZ3RoPDQpcmV0dXJuIG51bGw7bGV0IHQ9KG5bMl0/PzApPDw4fChuWzNdPz8wKSxvPTQrdDtyZXR1cm4gdDw9MHx8bi5ieXRlTGVuZ3RoPG8/bnVsbDp7dHlwZToicHJlc2VuY2UiLHJvb21Ub2tlbjpnZShuLnN1YmFycmF5KDQsbykpLGlzUHJlc2VudDpuWzFdPT09MX19LFNyPWU9PntsZXR7Y29ubmVjdGlvbjpuLGNoYW5uZWw6dH09ZTtyZXR1cm4gZS5pc0RlYWR8fG4uY29ubmVjdGlvblN0YXRlPT09ImNsb3NlZCJ8fG4uY29ubmVjdGlvblN0YXRlPT09ImZhaWxlZCJ8fG4uaWNlQ29ubmVjdGlvblN0YXRlPT09ImNsb3NlZCJ8fG4uaWNlQ29ubmVjdGlvblN0YXRlPT09ImZhaWxlZCJ8fHQ/LnJlYWR5U3RhdGU9PT0iY2xvc2luZyJ8fHQ/LnJlYWR5U3RhdGU9PT0iY2xvc2VkIn0sYnI9ZT0+e2lmKFNyKGUpKXJldHVybiJzdGFsZSI7bGV0e2NoYW5uZWw6bn09ZTtyZXR1cm4hbnx8bi5yZWFkeVN0YXRlIT09Im9wZW4iPyJ0cmFuc2llbnQiOiJsaXZlIn0sVHI9Y2xhc3N7YnlBcHA9e307cm9vbVByZXNlbmNlSGFuZGxlcnM9e307Z2V0TWFwKGUpe3JldHVybiB0aGlzLmJ5QXBwW2VdPz89e319Z2V0KGUsbil7cmV0dXJuIHRoaXMuYnlBcHBbZV0/LltuXX1pc1BlZXJTdGFsZShlKXtyZXR1cm4gU3IoZSl9Z2V0SGVhbHRoKGUpe3JldHVybiB0aGlzLmlzUGVlclN0YWxlKGUpPyJzdGFsZSI6ImxpdmUifXNldFJvb21QcmVzZW5jZUhhbmRsZXIoZSxuKXtyZXR1cm4gdGhpcy5yb29tUHJlc2VuY2VIYW5kbGVyc1tlXT1uLCgpPT57dGhpcy5yb29tUHJlc2VuY2VIYW5kbGVyc1tlXT09PW4mJmRlbGV0ZSB0aGlzLnJvb21QcmVzZW5jZUhhbmRsZXJzW2VdfX1zZW5kUm9vbVByZXNlbmNlKGUsbix0KXtlLmlzQ2xvc2luZ3x8ZS5wZWVyLmlzRGVhZHx8ZS5wZWVyLnNlbmREYXRhKGpvKG4sdCkpfWNsZWFyKGUsbix7ZGVzdHJveVBlZXI6dH0pe2xldCBvPXRoaXMuYnlBcHBbZV0saT1vPy5bbl07aWYoIWl8fGkuaXNDbG9zaW5nKXJldHVybjtpLmlkbGVUaW1lcj1fKGkuaWRsZVRpbWVyKSxpLmlzQ2xvc2luZz0hMCx0JiYhaS5wZWVyLmlzRGVhZCYmaS5wZWVyLmRlc3Ryb3koKTtsZXQgcz13ZShpLmJpbmRpbmdzKTtpLmJpbmRpbmdzPXt9LGkuYmluZGluZ3NCeVRva2VuPXt9LGkuY29udHJvbFJvb21JZD1udWxsLGRlbGV0ZSBvW25dLHMuZm9yRWFjaChyPT57ci5oYW5kbGVycy5jbG9zZT8uKCksci5wZW5kaW5nRGF0YS5sZW5ndGg9MCxyLnBlbmRpbmdTZW5kRGF0YS5sZW5ndGg9MCxyLnBlbmRpbmdUcmFja3MubGVuZ3RoPTB9KSxpLm1lZGlhLmNsZWFyUmVtb3RlKCksaS5wZW5kaW5nRGF0YUJ5VG9rZW4uY2xlYXIoKSxpLnJlbW90ZVJvb21Ub2tlbnMuY2xlYXIoKSxRKG8pLmxlbmd0aD09PTAmJmRlbGV0ZSB0aGlzLmJ5QXBwW2VdfXJlZ2lzdGVyKGUsbix0LG8pe2xldCBpPXRoaXMuZ2V0TWFwKGUpLHM9aVtuXTtpZihzKXtpZihzLmlkbGVUaW1lcj1fKHMuaWRsZVRpbWVyKSxzLnBlZXI9PT10KXJldHVybiBzO3RoaXMuY2xlYXIoZSxuLHtkZXN0cm95UGVlcjohMH0pfWxldCByPXthcHBJZDplLHBlZXJJZDpuLHBlZXI6dCxiaW5kaW5nczp7fSxiaW5kaW5nc0J5VG9rZW46e30scGVuZGluZ0RhdGFCeVRva2VuOm5ldyBNYXAscmVtb3RlUm9vbVRva2VuczpuZXcgU2V0LGlkbGVUaW1lcjpudWxsLGNvbnRyb2xSb29tSWQ6bnVsbCxzdHJlYW1Pd25lcnM6bmV3IE1hcCx0cmFja093bmVyczpuZXcgTWFwLG1lZGlhOkduKCksaWRsZU1zOm8saXNDbG9zaW5nOiExfTtyZXR1cm4gdC5zZXRIYW5kbGVycyh7ZGF0YTphPT50aGlzLmRpc3BhdGNoRGF0YShyLGEpLHNpZ25hbDphPT50aGlzLmRpc3BhdGNoU2lnbmFsKHIsYSksY2xvc2U6KCk9PnRoaXMuY2xlYXIoZSxuLHtkZXN0cm95UGVlcjohMX0pLGVycm9yOmE9Pntjb25zb2xlLmVycm9yKGAke0d9IHBlZXIgZXJyb3I6YCxhKSx0aGlzLmNsZWFyKGUsbix7ZGVzdHJveVBlZXI6ITF9KX0sdHJhY2s6KGEsYyk9PnRoaXMuZGlzcGF0Y2hUcmFjayhyLGEsYyl9KSxpW25dPXIscn1iaW5kKGUsbix0LHtvbkRldGFjaDpvfSl7bGV0IGk9dC5iaW5kaW5nc1tlXTtpZihpKXJldHVybiB0LmlkbGVUaW1lcj1fKHQuaWRsZVRpbWVyKSx7cHJveHk6aS5wcm94eSxpc05ldzohMX07bGV0IHM9e3Jvb21JZDplLHJvb21Ub2tlbjpudWxsLHJvb21Ub2tlblByb21pc2U6bixoYW5kbGVyczp7fSxwZW5kaW5nRGF0YTpbXSxwZW5kaW5nU2VuZERhdGE6W10scGVuZGluZ1RyYWNrczpbXSxkZXRhY2g6Vixwcm94eTp7fX0scj0oKT0+e3QuYmluZGluZ3NbZV0mJih0aGlzLnBydW5lUm9vbU93bmVyc2hpcCh0LGUpLGRlbGV0ZSB0LmJpbmRpbmdzW2VdLHMucm9vbVRva2VuJiZ0LmJpbmRpbmdzQnlUb2tlbltzLnJvb21Ub2tlbl09PT1zJiZkZWxldGUgdC5iaW5kaW5nc0J5VG9rZW5bcy5yb29tVG9rZW5dLHQuY29udHJvbFJvb21JZD09PWUmJih0LmNvbnRyb2xSb29tSWQ9USh0LmJpbmRpbmdzKVswXT8/bnVsbCksbygpLHRoaXMuc2NoZWR1bGVJZGxlVGltZXIodCkpfSxhPXtjcmVhdGVkOnQucGVlci5jcmVhdGVkLGdldCBjb25uZWN0aW9uKCl7cmV0dXJuIHQucGVlci5jb25uZWN0aW9ufSxnZXQgY2hhbm5lbCgpe3JldHVybiB0LnBlZXIuY2hhbm5lbH0sZ2V0IGlzRGVhZCgpe3JldHVybiB0LnBlZXIuaXNEZWFkfSxnZXRPZmZlcjpjPT50LnBlZXIuZ2V0T2ZmZXIoYyksc2lnbmFsOmM9PnQucGVlci5zaWduYWwoYyksc2VuZERhdGE6Yz0+e2lmKCFzLnJvb21Ub2tlbil7cy5wZW5kaW5nU2VuZERhdGEucHVzaChjKTtyZXR1cm59dC5wZWVyLnNlbmREYXRhKFByKHMucm9vbVRva2VuLGMpKX0sZGVzdHJveTooKT0+cigpLHNldEhhbmRsZXJzOmM9PntsZXR7c2lnbmFsOnUsLi4ubH09YztPYmplY3QuYXNzaWduKHMuaGFuZGxlcnMsbCksdSYmKHMuaGFuZGxlcnMuc2lnbmFsPXUpLHRoaXMuZmx1c2hCaW5kaW5nUXVldWVzKHMpfSxvZmZlclByb21pc2U6dC5wZWVyLm9mZmVyUHJvbWlzZSxhZGRTdHJlYW06Yz0+e2xldCB1PXQuc3RyZWFtT3duZXJzLmdldChjKT8/bmV3IFNldCxsPXUuc2l6ZT09PTA7dS5hZGQoZSksdC5zdHJlYW1Pd25lcnMuc2V0KGMsdSksbCYmdC5wZWVyLmFkZFN0cmVhbShjKX0scmVtb3ZlU3RyZWFtOmM9PntsZXQgdT10LnN0cmVhbU93bmVycy5nZXQoYyk7dSYmKHUuZGVsZXRlKGUpLHUuc2l6ZT09PTAmJih0LnN0cmVhbU93bmVycy5kZWxldGUoYyksdC5wZWVyLnJlbW92ZVN0cmVhbShjKSkpfSxhZGRUcmFjazooYyx1KT0+e2xldCBsPXQudHJhY2tPd25lcnMuZ2V0KGMpPz97c3RyZWFtOnUscm9vbXM6bmV3IFNldH0sZj1sLnJvb21zLnNpemU9PT0wO3JldHVybiBsLnN0cmVhbT11LGwucm9vbXMuYWRkKGUpLHQudHJhY2tPd25lcnMuc2V0KGMsbCksZj90LnBlZXIuYWRkVHJhY2soYyx1KTp0LnBlZXIuY29ubmVjdGlvbi5nZXRTZW5kZXJzKCkuZmluZChkPT5kLnRyYWNrPT09Yyk/P3QucGVlci5hZGRUcmFjayhjLHUpfSxyZW1vdmVUcmFjazpjPT57bGV0IHU9dC50cmFja093bmVycy5nZXQoYyk7dSYmKHUucm9vbXMuZGVsZXRlKGUpLHUucm9vbXMuc2l6ZT09PTAmJih0LnRyYWNrT3duZXJzLmRlbGV0ZShjKSx0LnBlZXIucmVtb3ZlVHJhY2soYykpKX0scmVwbGFjZVRyYWNrOihjLHUpPT57bGV0IGw9dC50cmFja093bmVycy5nZXQoYyk7aWYobCl7dC50cmFja093bmVycy5kZWxldGUoYyk7bGV0IGY9dC50cmFja093bmVycy5nZXQodSk/P3tzdHJlYW06bC5zdHJlYW0scm9vbXM6bmV3IFNldH07bC5yb29tcy5mb3JFYWNoKGQ9PmYucm9vbXMuYWRkKGQpKSx0LnRyYWNrT3duZXJzLnNldCh1LGYpfXJldHVybiB0LnBlZXIucmVwbGFjZVRyYWNrKGMsdSl9LF9fdHJ5c3Rlcm9NZWRpYTp0Lm1lZGlhfTtyZXR1cm4gcy5wcm94eT1hLHMuZGV0YWNoPXIsdC5iaW5kaW5nc1tlXT1zLHQuY29udHJvbFJvb21JZD8/PWUsdC5pZGxlVGltZXI9Xyh0LmlkbGVUaW1lciksbi50aGVuKGM9PntpZih0LmlzQ2xvc2luZ3x8dC5iaW5kaW5nc1tlXSE9PXMpcmV0dXJuO3Mucm9vbVRva2VuPWMsdC5iaW5kaW5nc0J5VG9rZW5bY109cztsZXQgdT10LnBlbmRpbmdEYXRhQnlUb2tlbi5nZXQoYyk7dT8ubGVuZ3RoJiYocy5wZW5kaW5nRGF0YS5wdXNoKC4uLnUpLHQucGVuZGluZ0RhdGFCeVRva2VuLmRlbGV0ZShjKSkscy5wZW5kaW5nU2VuZERhdGEuc3BsaWNlKDApLmZvckVhY2gobD0+dC5wZWVyLnNlbmREYXRhKFByKGMsbCkpKSx0aGlzLmZsdXNoQmluZGluZ1F1ZXVlcyhzKX0pLHtwcm94eTphLGlzTmV3OiEwfX1wcnVuZVJvb21Pd25lcnNoaXAoZSxuKXtlLnN0cmVhbU93bmVycy5mb3JFYWNoKCh0LG8pPT57dC5kZWxldGUobiksdC5zaXplPT09MCYmKGUuc3RyZWFtT3duZXJzLmRlbGV0ZShvKSxlLnBlZXIucmVtb3ZlU3RyZWFtKG8pKX0pLGUudHJhY2tPd25lcnMuZm9yRWFjaCgodCxvKT0+e3Qucm9vbXMuZGVsZXRlKG4pLHQucm9vbXMuc2l6ZT09PTAmJihlLnRyYWNrT3duZXJzLmRlbGV0ZShvKSxlLnBlZXIucmVtb3ZlVHJhY2sobykpfSl9c2NoZWR1bGVJZGxlVGltZXIoZSl7ZS5pc0Nsb3Npbmd8fFEoZS5iaW5kaW5ncykubGVuZ3RoPjB8fChlLmlkbGVUaW1lcj1fKGUuaWRsZVRpbWVyKSxlLmlkbGVUaW1lcj1zZXRUaW1lb3V0KCgpPT57bGV0IG49dGhpcy5ieUFwcFtlLmFwcElkXT8uW2UucGVlcklkXTshbnx8UShuLmJpbmRpbmdzKS5sZW5ndGg+MHx8dGhpcy5jbGVhcihlLmFwcElkLGUucGVlcklkLHtkZXN0cm95UGVlcjohMH0pfSxlLmlkbGVNcykpfWdldFNpZ25hbEJpbmRpbmcoZSl7aWYoZS5jb250cm9sUm9vbUlkKXtsZXQgdD1lLmJpbmRpbmdzW2UuY29udHJvbFJvb21JZF07aWYodD8uaGFuZGxlcnMuc2lnbmFsKXJldHVybiB0fWxldCBuPXdlKGUuYmluZGluZ3MpLmZpbmQodD0+ISF0LmhhbmRsZXJzLnNpZ25hbCk7cmV0dXJuIG4/KGUuY29udHJvbFJvb21JZD1uLnJvb21JZCxuKTpudWxsfWZsdXNoQmluZGluZ1F1ZXVlcyhlKXtsZXR7aGFuZGxlcnM6bn09ZTtuLmRhdGEmJmUucGVuZGluZ0RhdGEubGVuZ3RoPjAmJmUucGVuZGluZ0RhdGEuc3BsaWNlKDApLmZvckVhY2godD0+bi5kYXRhPy4odCkpLChuLnRyYWNrfHxuLnN0cmVhbSkmJmUucGVuZGluZ1RyYWNrcy5sZW5ndGgmJmUucGVuZGluZ1RyYWNrcy5zcGxpY2UoMCkuZm9yRWFjaCgoe3RyYWNrOnQsc3RyZWFtOm99KT0+e24udHJhY2s/Lih0LG8pLG4uc3RyZWFtPy4obyl9KX1kaXNwYXRjaERhdGEoZSxuKXtsZXQgdD1xbyhuKTtpZighdClyZXR1cm47aWYodC50eXBlPT09InByZXNlbmNlIil7dC5pc1ByZXNlbnQ/ZS5yZW1vdGVSb29tVG9rZW5zLmFkZCh0LnJvb21Ub2tlbik6ZS5yZW1vdGVSb29tVG9rZW5zLmRlbGV0ZSh0LnJvb21Ub2tlbiksdGhpcy5yb29tUHJlc2VuY2VIYW5kbGVyc1tlLmFwcElkXT8uKGUucGVlcklkLHQucm9vbVRva2VuLHQuaXNQcmVzZW50KTtyZXR1cm59bGV0IG89ZS5iaW5kaW5nc0J5VG9rZW5bdC5yb29tVG9rZW5dO2lmKCFvKXtsZXQgaT1lLnBlbmRpbmdEYXRhQnlUb2tlbi5nZXQodC5yb29tVG9rZW4pPz9bXTtpLnB1c2godC5wYXlsb2FkKSxlLnBlbmRpbmdEYXRhQnlUb2tlbi5zZXQodC5yb29tVG9rZW4saSk7cmV0dXJufW8uaGFuZGxlcnMuZGF0YT9vLmhhbmRsZXJzLmRhdGEodC5wYXlsb2FkKTpvLnBlbmRpbmdEYXRhLnB1c2godC5wYXlsb2FkKX1kaXNwYXRjaFNpZ25hbChlLG4pe3RoaXMuZ2V0U2lnbmFsQmluZGluZyhlKT8uaGFuZGxlcnMuc2lnbmFsPy4obil9ZGlzcGF0Y2hUcmFjayhlLG4sdCl7d2UoZS5iaW5kaW5ncykuZm9yRWFjaChvPT57aWYoby5oYW5kbGVycy50cmFja3x8by5oYW5kbGVycy5zdHJlYW0pe28uaGFuZGxlcnMudHJhY2s/LihuLHQpLG8uaGFuZGxlcnMuc3RyZWFtPy4odCk7cmV0dXJufW8ucGVuZGluZ1RyYWNrcy5wdXNoKHt0cmFjazpuLHN0cmVhbTp0fSl9KX19O3ZhciAkbz0yMzMzMyxXbz0xMixGbz03NTMzLHpvPTIzMzMzLFpuPSJfX2xlZ2FjeV9fIixkbj0ib2ZmZXItcGxhY2Vob2xkZXIiLEpvPVsib2ZmZXIiLCJhbnN3ZXIiLCJjYW5kaWRhdGUiXSxWbz1lPT57aWYodHlwZW9mIGU9PSJzdHJpbmciKXRyeXtsZXQgbj1oZShlKTtyZXR1cm4gbiYmdHlwZW9mIG49PSJvYmplY3QiP246bnVsbH1jYXRjaHtyZXR1cm4gbnVsbH1yZXR1cm4gZSYmdHlwZW9mIGU9PSJvYmplY3QiP2U6bnVsbH0sWWU9KGUsbik9PnR5cGVvZiBlW25dPT0ic3RyaW5nIiYmZVtuXT9lW25dOnZvaWQgMCxHbz1lPT5Kby5zb21lKG49Pm4gaW4gZSYmKHR5cGVvZiBlW25dIT0ic3RyaW5nInx8ZVtuXT09PSIiKSksQXI9KGUsbix0LG8saSxzKT0+e2UudG9DaXBoZXIobikudGhlbihyPT57ZS5pc0xlYXZpbmcoKXx8IXMoKXx8byh0LFooaShyLnNkcCkpKX0pfSxabz0oKT0+KHtzdGF0dXM6ImlkbGUiLG9mZmVyUGVlcjpudWxsLG9mZmVySWQ6bnVsbCxvZmZlclNkcDpudWxsLG9mZmVySW5pdFByb21pc2U6bnVsbCxvZmZlckFuc3dlcmVkOiExLG9mZmVyUmVsYXlzOltdLG9mZmVyU2lnbmFsUmVsYXlzOltdLG9mZmVyU2lnbmFsQmFja2xvZzpbXSxvZmZlclJlbGF5VGltZXJzOltdLG9mZmVyRXhwaXJ5VGltZXI6bnVsbCxjb25uZWN0ZWRQZWVyOm51bGwsY29ubmVjdGVkUGVlclVuaGVhbHRoeVNpbmNlTXM6bnVsbCxhbnN3ZXJpbmdFeHBpcnlUaW1lcjpudWxsLGFuc3dlcmluZ1BlZXI6bnVsbCxhbnN3ZXJTZW50OiExLGNvbm5lY3Rpb25FcnJvclJlcG9ydGVkOiExLHBlbmRpbmdDYW5kaWRhdGVzOnt9fSksWG89ZT0+Wy4uLmUudHVybkNvbmZpZz8/W10sLi4uZS5ydGNDb25maWc/LmljZVNlcnZlcnM/P1tdXS5zb21lKCh7dXJsczpufSk9PihBcnJheS5pc0FycmF5KG4pP246W25dKS5zb21lKHQ9Pi9edHVybnM/Oi9pLnRlc3QodCkpKSxZbz0oZSxuKT0+YGNvdWxkIG5vdCBjb25uZWN0IHRvIHBlZXIgJHtlfSBhZnRlciBleGNoYW5naW5nIFNEUDsgJHtYbyhuKT8iY2hlY2sgdGhhdCB5b3VyIFRVUk4gc2VydmVyIFVSTHMgYW5kIGNyZWRlbnRpYWxzIGFyZSByZWFjaGFibGUgYnkgYm90aCBwZWVycyI6ImNvbmZpZ3VyZSBUVVJOIHNlcnZlcnMgd2l0aCB0dXJuQ29uZmlnIG9yIHJ0Y0NvbmZpZy5pY2VTZXJ2ZXJzIn1gLGduPShlLG4sdCk9PntlLmlzTGVhdmluZygpfHxuLmNvbm5lY3RlZFBlZXJ8fG4uY29ubmVjdGlvbkVycm9yUmVwb3J0ZWR8fChuLmNvbm5lY3Rpb25FcnJvclJlcG9ydGVkPSEwLGUub25Kb2luRXJyb3I/Lih7ZXJyb3I6WW8odCxlLmNvbmZpZyksYXBwSWQ6ZS5hcHBJZCxwZWVySWQ6dCxyb29tSWQ6ZS5yb29tSWR9KSl9LGplPShlLG4pPT5lW25dPz89Wm8oKSxjZT1lPT57ZS5jb25uZWN0ZWRQZWVyP2Uuc3RhdHVzPSJjb25uZWN0ZWQiOmUuYW5zd2VyaW5nUGVlcj9lLnN0YXR1cz0iYW5zd2VyaW5nIjplLm9mZmVyUGVlcnx8ZS5vZmZlclJlbGF5cy5zb21lKEJvb2xlYW4pP2Uuc3RhdHVzPSJvZmZlcmluZyI6ZS5zdGF0dXM9ImlkbGUifSx1bj0oZSxuKT0+e2UuYW5zd2VyaW5nUGVlcj09PW4mJihlLmFuc3dlcmluZ0V4cGlyeVRpbWVyPV8oZS5hbnN3ZXJpbmdFeHBpcnlUaW1lciksZS5hbnN3ZXJpbmdQZWVyPW51bGwsZS5hbnN3ZXJTZW50PSExLGNlKGUpKX0sbW49KGUsbix0KT0+e2UuY29ubmVjdGVkUGVlciYmKGUuY29ubmVjdGVkUGVlci5pc0RlYWR8fGUuY29ubmVjdGVkUGVlci5kZXN0cm95KCksZS5jb25uZWN0ZWRQZWVyPW51bGwsZS5jb25uZWN0ZWRQZWVyVW5oZWFsdGh5U2luY2VNcz1udWxsLGNlKGUpKX0sWG49KGUsbik9PntlLm9mZmVyUmVsYXlUaW1lcnNbbl09XyhlLm9mZmVyUmVsYXlUaW1lcnNbbl0pLGUub2ZmZXJSZWxheXNbbl0mJihlLm9mZmVyUmVsYXlzW25dPXZvaWQgMCxjZShlKSl9LFJyPShlLG4pPT57ZT8ub2ZmZXJSZWxheXNbbl09PT1kbiYmWG4oZSxuKX0sUW89ZT0+e2lmKGUuaXNEZWFkfHxlLmNvbm5lY3Rpb24uY29ubmVjdGlvblN0YXRlPT09ImNsb3NlZCIpcmV0dXJuITA7dHJ5e3JldHVybiEhZS5jb25uZWN0aW9uLnJlbW90ZURlc2NyaXB0aW9ufWNhdGNoe3JldHVybiEwfX0scWU9KGUsbik9PntsZXQgdD1lLm9mZmVyQW5zd2VyZWQ7ZS5vZmZlckV4cGlyeVRpbWVyPV8oZS5vZmZlckV4cGlyeVRpbWVyKSxlLm9mZmVySW5pdFByb21pc2U9bnVsbCxlLm9mZmVyUmVsYXlzLmZvckVhY2goKG8saSk9PlhuKGUsaSkpLGUub2ZmZXJSZWxheXM9W10sZS5vZmZlclNpZ25hbFJlbGF5cz1bXSxlLm9mZmVyUmVsYXlUaW1lcnM9W10sZS5vZmZlclNpZ25hbEJhY2tsb2c9W10sZS5vZmZlclBlZXImJmUub2ZmZXJQZWVyIT09ZS5jb25uZWN0ZWRQZWVyJiYodHx8UW8oZS5vZmZlclBlZXIpP2Uub2ZmZXJQZWVyLmlzRGVhZHx8ZS5vZmZlclBlZXIuZGVzdHJveSgpOm4ucmVjeWNsZShlLm9mZmVyUGVlcikpLGUub2ZmZXJQZWVyPW51bGwsZS5vZmZlcklkPW51bGwsZS5vZmZlclNkcD1udWxsLGUub2ZmZXJBbnN3ZXJlZD0hMSxlLmNvbm5lY3Rpb25FcnJvclJlcG9ydGVkPSExLGNlKGUpfSxlcz0oZSxuLHQsbyk9PntfKG4uYW5zd2VyaW5nRXhwaXJ5VGltZXIpLG4uYW5zd2VyaW5nRXhwaXJ5VGltZXI9c2V0VGltZW91dCgoKT0+e2xldCBpPWUucGVlclN0YXRlc1t0XTshaXx8aS5jb25uZWN0ZWRQZWVyfHxpLmFuc3dlcmluZ1BlZXIhPT1vfHwoaS5hbnN3ZXJTZW50JiZnbihlLGksdCksby5kZXN0cm95KCksdW4oaSxvKSxlLmNoZWNrRGVhY3RpdmF0ZSgpKX0sem8pfSxucz1hc3luYyhlLG4sdCk9PntsZXQgbz10P1t0LFpuXTpbWm5dO2ZvcihsZXQgaSBvZiBvKXtsZXQgcz1lLnBlbmRpbmdDYW5kaWRhdGVzW2ldO2lmKHM/Lmxlbmd0aCl7ZGVsZXRlIGUucGVuZGluZ0NhbmRpZGF0ZXNbaV07Zm9yKGxldCByIG9mIHMpYXdhaXQgbi5zaWduYWwocil9fX0sRXI9KGUsbix0LG89VmUpPT57XyhuLm9mZmVyRXhwaXJ5VGltZXIpO2xldCBpPW4ub2ZmZXJJZDtuLm9mZmVyRXhwaXJ5VGltZXI9c2V0VGltZW91dCgoKT0+e2xldCBzPWUucGVlclN0YXRlc1t0XTshc3x8cy5jb25uZWN0ZWRQZWVyfHxzLm9mZmVySWQhPT1pfHwocy5vZmZlckFuc3dlcmVkJiZnbihlLHMsdCkscWUocyxlLm9mZmVyUG9vbCksZS5jaGVja0RlYWN0aXZhdGUoKSl9LG8pfSx0cz0oZSxuLHQsbyk9Pm4ub2ZmZXJQZWVyJiZuLm9mZmVySWQmJm4ub2ZmZXJTZHA/UHJvbWlzZS5yZXNvbHZlKHtwZWVyOm4ub2ZmZXJQZWVyLG9mZmVyOm4ub2ZmZXJTZHAsb2ZmZXJJZDpuLm9mZmVySWR9KToobi5vZmZlckluaXRQcm9taXNlfHwobi5vZmZlckluaXRQcm9taXNlPShhc3luYygpPT57bGV0IGk9KGF3YWl0IGUub2ZmZXJQb29sLmNoZWNrb3V0KDEsITEsZS5lbmNyeXB0T2ZmZXIpKVswXTtpZighaSl0aHJvdyBJKCJmYWlsZWQgdG8gYWxsb2NhdGUgb2ZmZXIgcGVlciIpO2xldHtwZWVyOnMsb2ZmZXI6cn09aTtuLm9mZmVyUGVlcj1zLG4ub2ZmZXJJZD1sZShXbyksbi5vZmZlclNkcD1yLG4ub2ZmZXJBbnN3ZXJlZD0hMSxuLmNvbm5lY3Rpb25FcnJvclJlcG9ydGVkPSExLG4ub2ZmZXJTaWduYWxCYWNrbG9nPVtdLGNlKG4pO2xldCBhPSgpPT57bi5vZmZlclBlZXI9PT1zJiYhbi5jb25uZWN0ZWRQZWVyJiYobi5vZmZlckFuc3dlcmVkJiZnbihlLG4sdCkscWUobixlLm9mZmVyUG9vbCkpLGUuZGlzY29ubmVjdFBlZXIocyx0KSxlLmNoZWNrRGVhY3RpdmF0ZSgpfTtyZXR1cm4gcy5zZXRIYW5kbGVycyh7Y29ubmVjdDooKT0+ZS5jb25uZWN0UGVlcihzLHQsbyksc2lnbmFsOmM9PntuLm9mZmVyUGVlcj09PXMmJihuLm9mZmVyU2lnbmFsQmFja2xvZy5wdXNoKGMpLG4ub2ZmZXJTaWduYWxSZWxheXMuZm9yRWFjaCh1PT51Py4oYykpKX0sY2xvc2U6YSxlcnJvcjphfSksRXIoZSxuLHQpLHtwZWVyOnMsb2ZmZXI6cixvZmZlcklkOm4ub2ZmZXJJZH19KSgpLmZpbmFsbHkoKCk9Pm4ub2ZmZXJJbml0UHJvbWlzZT1udWxsKSksbi5vZmZlckluaXRQcm9taXNlKSxycz1hc3luYyhlLG4sdCxvLGkpPT57aWYobyl7ZS5hdHRhY2hTaGFyZWRQZWVyVG9Sb29tKHQsbyk7cmV0dXJufWxldCBzPWUucGVlclN0YXRlc1t0XTtpZighc3x8cy5jb25uZWN0ZWRQZWVyfHxzLmFuc3dlcmluZ1BlZXJ8fHMub2ZmZXJBbnN3ZXJlZCl7UnIocyxuKTtyZXR1cm59aWYocy5vZmZlclJlbGF5c1tuXSE9PWRuKXJldHVybjtsZXRbcixhXT1hd2FpdCBhZShbVGUoRGUoZS5yb290VG9waWNQbGFpbnRleHQsdCkpLHRzKGUscyx0LG4pXSk7aWYoZS5pc0xlYXZpbmcoKSlyZXR1cm47aWYocy5jb25uZWN0ZWRQZWVyfHxzLmFuc3dlcmluZ1BlZXJ8fHMub2ZmZXJBbnN3ZXJlZHx8cy5vZmZlclJlbGF5c1tuXSE9PWRuKXtScihzLG4pO3JldHVybn1zLm9mZmVyUmVsYXlUaW1lcnNbbl09XyhzLm9mZmVyUmVsYXlUaW1lcnNbbl0pLHMub2ZmZXJSZWxheXNbbl09ITAsY2Uocykscy5vZmZlclJlbGF5VGltZXJzW25dPXNldFRpbWVvdXQoKCk9PmlzKGUsdCxuKSwoZS5hbm5vdW5jZUludGVydmFsc1tuXT8/ZS5hbm5vdW5jZUludGVydmFsTXMpKi45KTtsZXQgYz0hMTtzLm9mZmVyU2lnbmFsUmVsYXlzW25dPXU9PntjJiYoZS5pc0xlYXZpbmcoKXx8cy5jb25uZWN0ZWRQZWVyfHxzLm9mZmVyUGVlciE9PWEucGVlcnx8cy5vZmZlcklkIT09YS5vZmZlcklkfHx1LnR5cGUhPT0iY2FuZGlkYXRlInx8QXIoZSx1LHIsaSxsPT4oe3BlZXJJZDpZLG9mZmVySWQ6YS5vZmZlcklkLGNhbmRpZGF0ZTpsLC4uLmUuaXNQYXNzaXZlP3twYXNzaXZlOiEwfTp7fX0pLCgpPT4hcy5jb25uZWN0ZWRQZWVyJiZzLm9mZmVyUGVlcj09PWEucGVlciYmcy5vZmZlcklkPT09YS5vZmZlcklkKSl9LGkocixaKHtwZWVySWQ6WSxvZmZlcklkOmEub2ZmZXJJZCxvZmZlcjphLm9mZmVyLC4uLmUuaXNQYXNzaXZlP3twYXNzaXZlOiEwfTp7fX0pKSxjPSEwLHMub2ZmZXJTaWduYWxCYWNrbG9nLmZvckVhY2godT0+cy5vZmZlclNpZ25hbFJlbGF5c1tuXT8uKHUpKX0sb3M9YXN5bmMoZSxuLHQsbyxpLHMscik9PntsZXQgYT1qZShlLnBlZXJTdGF0ZXMsdCk7aWYoYS5hbnN3ZXJpbmdQZWVyfHxhLm9mZmVyQW5zd2VyZWQpcmV0dXJuO2xldCBjPSEhKGEub2ZmZXJQZWVyfHxhLm9mZmVyUmVsYXlzLnNvbWUoQm9vbGVhbikpO2lmKChjfHxzKSYmWTx0KXJldHVybjtjJiZxZShhLGUub2ZmZXJQb29sKTtsZXQgdT1lLmluaXRQZWVyKCExLGUuY29uZmlnKTthLmFuc3dlcmluZ1BlZXI9dSxhLmFuc3dlclNlbnQ9ITEsYS5jb25uZWN0aW9uRXJyb3JSZXBvcnRlZD0hMSxlcyhlLGEsdCx1KSxjZShhKTtsZXQgbD0oKT0+e2EuYW5zd2VyaW5nUGVlcj09PXUmJiFhLmNvbm5lY3RlZFBlZXImJmEuYW5zd2VyU2VudCYmZ24oZSxhLHQpLHVuKGEsdSksZS5kaXNjb25uZWN0UGVlcih1LHQpLGUuY2hlY2tEZWFjdGl2YXRlKCl9O3Uuc2V0SGFuZGxlcnMoe2Nvbm5lY3Q6KCk9PmUuY29ubmVjdFBlZXIodSx0LG4pLGNsb3NlOmwsZXJyb3I6bH0pO2xldCBmO3RyeXtmPWF3YWl0IGUudG9QbGFpbih7dHlwZToib2ZmZXIiLHNkcDpvfSl9Y2F0Y2h7dW4oYSx1KSxlLm9uSm9pbkVycm9yPy4oe2Vycm9yOiJpbmNvcnJlY3Qgcm9vbSBwYXNzd29yZCB3aGVuIGRlY3J5cHRpbmcgb2ZmZXIiLGFwcElkOmUuYXBwSWQscGVlcklkOnQscm9vbUlkOmUucm9vbUlkfSk7cmV0dXJufWlmKHUuaXNEZWFkKXt1bihhLHUpO3JldHVybn1sZXQgZD1hd2FpdCBUZShEZShlLnJvb3RUb3BpY1BsYWludGV4dCx0KSk7ZS5pc0xlYXZpbmcoKXx8KHUuc2V0SGFuZGxlcnMoe3NpZ25hbDpnPT57ZS5pc0xlYXZpbmcoKXx8YS5hbnN3ZXJpbmdQZWVyIT09dXx8dS5pc0RlYWR8fGcudHlwZSE9PSJhbnN3ZXIiJiZnLnR5cGUhPT0iY2FuZGlkYXRlInx8QXIoZSxnLGQscixwPT57bGV0IFI9e3BlZXJJZDpZfTtyZXR1cm4gZy50eXBlPT09ImFuc3dlciI/KGEuYW5zd2VyU2VudD0hMCxSLmFuc3dlcj1wKTpSLmNhbmRpZGF0ZT1wLGkmJihSLm9mZmVySWQ9aSksZS5pc1Bhc3NpdmUmJihSLnBhc3NpdmU9ITApLFJ9LCgpPT5hLmFuc3dlcmluZ1BlZXI9PT11JiYhdS5pc0RlYWQpfX0pLGF3YWl0IHUuc2lnbmFsKGYpLGF3YWl0IG5zKGEsdSxpKSl9LHNzPWFzeW5jKGUsbix0LG8saSk9PntsZXQgczt0cnl7cz1hd2FpdCBlLnRvUGxhaW4oe3R5cGU6YW4sc2RwOnR9KX1jYXRjaHtyZXR1cm59bGV0IHI9amUoZS5wZWVyU3RhdGVzLG4pLGE9byYmcj8ub2ZmZXJQZWVyJiZyLm9mZmVySWQ9PT1vP3Iub2ZmZXJQZWVyOm51bGwsYz1yPy5hbnN3ZXJpbmdQZWVyPz9udWxsLHU9IW8mJnI/Lm9mZmVyUGVlcj9yLm9mZmVyUGVlcjpudWxsLGw9aSYmIWkuaXNEZWFkP2k6YT8/Yz8/dTtpZighbHx8bC5pc0RlYWQpe2xldCBmPW8/P1puOyhyLnBlbmRpbmdDYW5kaWRhdGVzW2ZdPz89W10pLnB1c2gocyk7cmV0dXJufWwuc2lnbmFsKHMpfSxhcz1hc3luYyhlLG4sdCxvLGkscyk9PntsZXQgcjt0cnl7cj1hd2FpdCBlLnRvUGxhaW4oe3R5cGU6ImFuc3dlciIsc2RwOm99KX1jYXRjaHtlLm9uSm9pbkVycm9yPy4oe2Vycm9yOiJpbmNvcnJlY3Qgcm9vbSBwYXNzd29yZCB3aGVuIGRlY3J5cHRpbmcgYW5zd2VyIixhcHBJZDplLmFwcElkLHBlZXJJZDp0LHJvb21JZDplLnJvb21JZH0pO3JldHVybn1pZihzKWUub2ZmZXJQb29sLmNsYWltTGVhc2VkKHMpLHMuc2V0SGFuZGxlcnMoe2Nvbm5lY3Q6KCk9PmUuY29ubmVjdFBlZXIocyx0LG4pLGNsb3NlOigpPT5lLmRpc2Nvbm5lY3RQZWVyKHMsdCl9KSxzLnNpZ25hbChyKTtlbHNle2xldCBhPWUucGVlclN0YXRlc1t0XTtpZighYXx8IWEub2ZmZXJQZWVyfHxhLm9mZmVyQW5zd2VyZWR8fGkmJmEub2ZmZXJJZCYmaSE9PWEub2ZmZXJJZHx8YS5vZmZlclBlZXIuaXNEZWFkKXJldHVybjthLm9mZmVyQW5zd2VyZWQ9ITAsRXIoZSxhLHQsJG8pLGEub2ZmZXJQZWVyLnNpZ25hbChyKX19LGlzPShlLG4sdCk9PntsZXQgbz1lLnBlZXJTdGF0ZXNbbl07IW98fG8uY29ubmVjdGVkUGVlcnx8by5vZmZlclJlbGF5c1t0XSYmKFhuKG8sdCksZS5jaGVja0RlYWN0aXZhdGUoKSl9LE1yPWU9Pm49PmFzeW5jKHQsbyxpKT0+e2lmKGUuaXNMZWF2aW5nKCkpcmV0dXJuO2xldCBzPVZvKG8pO2lmKCFzfHxHbyhzKSlyZXR1cm47bGV0IHI9WWUocywicGVlcklkIik/PyIiLGE9WWUocywib2ZmZXIiKSxjPVllKHMsImFuc3dlciIpLHU9WWUocywiY2FuZGlkYXRlIiksbD1ZZShzLCJvZmZlcklkIiksZj1zLnBlZXIsZD1zLmhhc091dGdvaW5nT2ZmZXI9PT0hMCxnPXMucGFzc2l2ZT09PSEwO2lmKCFyfHxyPT09WSlyZXR1cm47bGV0W3AsUl09YXdhaXQgYWUoW2Uucm9vdFRvcGljUCxlLnNlbGZUb3BpY1BdKTtpZihlLmlzTGVhdmluZygpfHx0IT09cCYmdCE9PVJ8fGUuaXNQYXNzaXZlJiZnfHwoZS5pc1Bhc3NpdmUmJiFlLmlzQWN0aXZlJiYhYyYmIXUmJihlLmlzQWN0aXZlPSEwLGUucmVxdWV1ZUFubm91bmNlPy4oKSksZS5pc1Bhc3NpdmUmJiFlLmlzQWN0aXZlKSlyZXR1cm47bGV0IGI9ZS5wZWVyU3RhdGVzW3JdLEI9Yj8uY29ubmVjdGVkUGVlcjtpZihCJiZiKXtsZXQgSD1icihCKTtpZihIPT09ImxpdmUiKXtiLmNvbm5lY3RlZFBlZXJVbmhlYWx0aHlTaW5jZU1zPW51bGw7cmV0dXJufWlmKEg9PT0ic3RhbGUiKW1uKGIsciwibWVzc2FnZS1mcm9tLXN0YWxlLXBlZXIiKTtlbHNle2xldCB2PURhdGUubm93KCksQT1iLmNvbm5lY3RlZFBlZXJVbmhlYWx0aHlTaW5jZU1zPz92O2lmKGIuY29ubmVjdGVkUGVlclVuaGVhbHRoeVNpbmNlTXM9QSx2LUE8Rm8pcmV0dXJuO21uKGIsciwibWVzc2FnZS1mcm9tLXByb2xvbmdlZC1kaXNjb25uZWN0Iil9fWxldCB3PWUuc2hhcmVkUGVlcnMuZ2V0KGUuYXBwSWQscik7dyYmZS5zaGFyZWRQZWVycy5nZXRIZWFsdGgody5wZWVyKT09PSJzdGFsZSImJihlLnNoYXJlZFBlZXJzLmNsZWFyKGUuYXBwSWQscix7ZGVzdHJveVBlZXI6ITB9KSx3PXZvaWQgMCk7bGV0IEM9ISEociYmIWEmJiFjJiYhdSk7aWYoQyYmIXcpe2xldCBIPWplKGUucGVlclN0YXRlcyxyKSx2PVk8cjtpZihILmFuc3dlcmluZ1BlZXJ8fEguY29ubmVjdGVkUGVlcnx8SC5vZmZlckFuc3dlcmVkKXJldHVybjtpZighdiYmIUgub2ZmZXJQZWVyKXtsZXQgQT1hd2FpdCBUZShEZShlLnJvb3RUb3BpY1BsYWludGV4dCxyKSk7IWUuaXNMZWF2aW5nKCkmJiFILmNvbm5lY3RlZFBlZXImJmkoQSxaKHtwZWVySWQ6WX0pKTtyZXR1cm59aWYoSC5vZmZlclJlbGF5c1tuXSlyZXR1cm47SC5vZmZlclJlbGF5c1tuXT1kbixjZShIKX1pZih3JiYoYXx8Y3x8dSkpe2lmKHcuYmluZGluZ3NbZS5yb29tSWRdKXJldHVybjtlLmF0dGFjaFNoYXJlZFBlZXJUb1Jvb20ocix3KTtyZXR1cm59aWYoQylyZXR1cm4gcnMoZSxuLHIsdyxpKTtpZihhKXJldHVybiBvcyhlLG4scixhLGwsZCxpKTtpZih1KXJldHVybiBzcyhlLHIsdSxsLGYpO2lmKGMpcmV0dXJuIGFzKGUsbixyLGMsbCxmKX07dmFyIGhuPTUzMzMsY3M9WzIzMyw1MzMsMTMzM10sZnM9NzUzMyxscz0xMjMzMzMsWW49KHtpbml0OmUsc3Vic2NyaWJlOm4sYW5ub3VuY2U6dCxkZWFjdGl2YXRlOm99KT0+e2xldCBpPXt9LHM9e30scj17fSxhPXt9LGM9bmV3IFRyLHU9KCk9PndlKGkpLnNvbWUodj0+USh2KS5sZW5ndGg+MCksbD12PT5zW3ZdPz89e30sZj12PT5yW3ZdPz89e30sZD0odixBLEspPT57Yy5nZXRIZWFsdGgodi5wZWVyKT09PSJsaXZlIiYmYy5zZW5kUm9vbVByZXNlbmNlKHYsQSxLKX0sZz0odixBKT0+e21lKHNbdl0/P3t9KS5mb3JFYWNoKChbSyxUXSk9PntpZighVC5zaG91bGRBZHZlcnRpc2UoKSlyZXR1cm47bGV0e3Jvb21Ub2tlbjokLHJvb21Ub2tlblByb21pc2U6en09VDtpZigkKXtkKEEsJCwhMCk7cmV0dXJufXoudGhlbihqPT57c1t2XT8uW0tdPT09VCYmVC5yb29tVG9rZW49PT1qJiYoYy5nZXQodixBLnBlZXJJZCkhPT1BfHxBLmlzQ2xvc2luZ3x8VC5zaG91bGRBZHZlcnRpc2UoKSYmZChBLGosITApKX0pfSl9LHA9KHYsQSxLKT0+d2UoYy5nZXRNYXAodikpLmZvckVhY2goVD0+ZChULEEsSykpLFI9dj0+e2Fbdl18fChhW3ZdPWMuc2V0Um9vbVByZXNlbmNlSGFuZGxlcih2LChBLEssVCk9PntpZighVClyZXR1cm47bGV0ICQ9Yy5nZXQodixBKSx6PXJbdl0/LltLXTshJHx8IXp8fHNbdl0/Llt6XT8uYXR0YWNoU2hhcmVkUGVlclRvUm9vbShBLCQpfSkpfSxiPXY9PntpW3ZdJiZRKGlbdl0pLmxlbmd0aD4wfHwoYVt2XT8uKCksZGVsZXRlIGFbdl0sZGVsZXRlIHNbdl0sZGVsZXRlIHJbdl0pfSxCPSExLHc9W10sQz1udWxsLEg9VjtyZXR1cm4odixBLEspPT57aWYoIXYpdGhyb3cgSSgicmVxdWlyZXMgYSBjb25maWcgbWFwIGFzIHRoZSBmaXJzdCBhcmd1bWVudCIpO2lmKEsmJnR5cGVvZiBLIT0ib2JqZWN0Iil0aHJvdyBJKCJ0aGlyZCBhcmd1bWVudCBtdXN0IGJlIGEgY2FsbGJhY2tzIG9iamVjdCIpO2xldHthcHBJZDpUfT12LCQ9Sz8ub25Kb2luRXJyb3Isej1LPy5vblBlZXJIYW5kc2hha2Usaj1LPy5oYW5kc2hha2VUaW1lb3V0TXM7aWYoIVQpdGhyb3cgSSgiY29uZmlnIG1hcCBpcyBtaXNzaW5nIGFwcElkIGZpZWxkIik7aWYoIUEpdGhyb3cgSSgicm9vbUlkIGFyZ3VtZW50IHJlcXVpcmVkIik7aWYoaiE9PXZvaWQgMCYmKCFOdW1iZXIuaXNGaW5pdGUoail8fGo8PTApKXRocm93IEkoImhhbmRzaGFrZVRpbWVvdXRNcyBtdXN0IGJlIGEgcG9zaXRpdmUgbnVtYmVyIik7aWYoaVtUXT8uW0FdKXJldHVybiBpW1RdW0FdO1IoVCk7bGV0IFc9RGUoRyxULEEpLGVlPVRlKFcpLG09VGUoRGUoVyxZKSkseT1HdCh2LnBhc3N3b3JkPz8iIixULEEpLFM9WnQoVCxBKSxQPXYuX3Rlc3Rfb25seV9zaGFyZWRQZWVySWRsZU1zPz9scyxNPSExLE49Tz0+YXN5bmMgRD0+KHt0eXBlOkQudHlwZSxzZHA6YXdhaXQgTyh5LEQuc2RwKX0pLHE9TihlciksaD1OKFF0KSxrPWMuZ2V0TWFwKFQpLHg9KCk9PlduKCEwLHYpLG5lPSExO0N8fD1uZXcgbnIoeCk7bGV0IHRlPUMsJGU9YXN5bmMgTz0+e2xldCBEPWF3YWl0IE8uZ2V0T2ZmZXIoRGF0ZS5ub3coKS1PLmNyZWF0ZWQ+VmUpO2lmKCFEfHxELnR5cGUhPT0ib2ZmZXIiKXRocm93IEkoImZhaWxlZCB0byBnZXQgb2ZmZXIgZm9yIHBlZXIiKTtyZXR1cm4oYXdhaXQgaChEKSkuc2RwfSxXZT0oTyxEKT0+e2xldCBMPWplKEoucGVlclN0YXRlcyxPKTtMLmFuc3dlcmluZ0V4cGlyeVRpbWVyPV8oTC5hbnN3ZXJpbmdFeHBpcnlUaW1lciksTC5hbnN3ZXJpbmdQZWVyPW51bGw7bGV0e3Byb3h5OlgsaXNOZXc6VX09Yy5iaW5kKEEsUyxELHtvbkRldGFjaDooKT0+e2xldCBvZT1KLnBlZXJTdGF0ZXNbT107b2U/LmNvbm5lY3RlZFBlZXI9PT1ELnBlZXImJihvZS5jb25uZWN0ZWRQZWVyPW51bGwsb2UuY29ubmVjdGVkUGVlclVuaGVhbHRoeVNpbmNlTXM9bnVsbCxjZShvZSkpfX0pO0wuY29ubmVjdGVkUGVlcj1ELnBlZXIsTC5jb25uZWN0ZWRQZWVyVW5oZWFsdGh5U2luY2VNcz1udWxsLGNlKEwpLFUmJnZuKFgsTykscWUoTCx0ZSl9LFVyPShPLEQsTCk9PntpZihNKXtPLmRlc3Ryb3koKTtyZXR1cm59bGV0IFg9amUoSi5wZWVyU3RhdGVzLEQpO2lmKFguY29ubmVjdGVkUGVlcil7bGV0IHNlPWtbRF07aWYoc2UmJlguY29ubmVjdGVkUGVlcj09PXNlLnBlZXImJnNlLmJpbmRpbmdzW0FdKXJldHVybjtYLmNvbm5lY3RlZFBlZXIhPT1PJiYhTy5pc0RlYWQmJk8uZGVzdHJveSgpO3JldHVybn1sZXQgVT1rW0RdO2lmKFUmJmMuZ2V0SGVhbHRoKFUucGVlcik9PT0ic3RhbGUiJiYoYy5jbGVhcihULEQse2Rlc3Ryb3lQZWVyOiEwfSksVT12b2lkIDApLFUmJlUucGVlciE9PU8pe08uaXNEZWFkfHxPLmRlc3Ryb3koKSxXZShELFUpO3JldHVybn1sZXQgb2U9IVU7VXx8PWMucmVnaXN0ZXIoVCxELE8sUCksV2UoRCxVKSxvZSYmZyhULFUpfSxLcj0oTyxEKT0+e2lmKE0pcmV0dXJuO2xldCBMPUoucGVlclN0YXRlc1tEXTtMPy5jb25uZWN0ZWRQZWVyPT09TyYmKG1uKEwsRCwiY2xvc2UtZXZlbnQiKSxlbigpLCFpZSYmbmUmJkoucmVxdWV1ZUFubm91bmNlPy4oKSl9LGllPSEhdi5wYXNzaXZlLEFlPW51bGwsRWUsaXQ9Vixlbj0oKT0+e2lmKCFpZXx8IUouaXNBY3RpdmUpcmV0dXJuO2xldCBPPSExO21lKEoucGVlclN0YXRlcykuZm9yRWFjaCgoW0QsTF0pPT57TC5jb25uZWN0ZWRQZWVyfHxMLmFuc3dlcmluZ1BlZXJ8fEwub2ZmZXJJbml0UHJvbWlzZXx8TC5vZmZlclBlZXJ8fEwub2ZmZXJSZWxheXMuc29tZShCb29sZWFuKT9PPSEwOkwuc3RhdHVzPT09ImlkbGUiJiZkZWxldGUgSi5wZWVyU3RhdGVzW0RdfSksT3x8KEouaXNBY3RpdmU9ITEsRWU9XyhFZSksSWUuZm9yRWFjaChfKSxJZS5sZW5ndGg9MCxpdCgpLEFlPy5yb29tVG9rZW4mJnAoVCxBZS5yb29tVG9rZW4sITEpKX0sSj17YXBwSWQ6VCxyb29tSWQ6QSxjb25maWc6dixwZWVyU3RhdGVzOnt9LHJvb3RUb3BpY1BsYWludGV4dDpXLHJvb3RUb3BpY1A6ZWUsc2VsZlRvcGljUDptLHRvUGxhaW46cSx0b0NpcGhlcjpoLGlzTGVhdmluZzooKT0+TSxpc1Bhc3NpdmU6aWUsaXNBY3RpdmU6IWllLG9uSm9pbkVycm9yOiQsc2hhcmVkUGVlcnM6YyxvZmZlclBvb2w6dGUsZW5jcnlwdE9mZmVyOiRlLGluaXRQZWVyOlduLGNvbm5lY3RQZWVyOlVyLGRpc2Nvbm5lY3RQZWVyOktyLGF0dGFjaFNoYXJlZFBlZXJUb1Jvb206V2UsY2hlY2tEZWFjdGl2YXRlOmVuLGFubm91bmNlSW50ZXJ2YWxzOltdLGFubm91bmNlSW50ZXJ2YWxNczpobn0seW49e2NvbmZpZzp2LGFwcElkOlQscm9vbUlkOkEsaXNQYXNzaXZlOmllfSxqcj1NcihKKTtpZighQil7bGV0IE89ZSh2KTt3PShBcnJheS5pc0FycmF5KE8pP086W09dKS5tYXAoRD0+UHJvbWlzZS5yZXNvbHZlKEQpKSxCPSEwLEg9di5yZWxheUNvbmZpZz8ubWFudWFsUmVjb25uZWN0aW9uP1Y6VnQoKX0haWUmJiF0ZS5pc0FjdGl2ZSYmdGUud2FybXVwKCksSi5hbm5vdW5jZUludGVydmFscz13Lm1hcCgoKT0+aG4pO2xldCB3bj13Lm1hcCgoKT0+aG4pLFBuPXcubWFwKCgpPT4wKSxrbj13Lm1hcCgoKT0+MCksSWU9W10sY3Q9dy5tYXAoYXN5bmMoTyxEKT0+bihhd2FpdCBPLGF3YWl0IGVlLGF3YWl0IG0sanIoRCksTD0+dGUuZ2V0T2ZmZXJzKEwsJGUpLHluKSk7YWUoW2VlLG1dKS50aGVuKChbTyxEXSk9PntpZihNKXJldHVybjtsZXQgTD1hc3luYyhYLFUpPT57aWYoTXx8aWUmJiFKLmlzQWN0aXZlKXJldHVybjtsZXQgb2U9aWU/e3Bhc3NpdmU6ITB9OnZvaWQgMCxzZTt0cnl7c2U9YXdhaXQgdChYLE8sRCxvZSx5biksa25bVV09MH1jYXRjaCh6cil7bGV0IG10PWtuW1VdPz8wO210PT09MCYmdi5yZWxheUNvbmZpZz8ud2Fybk9uUmVsYXlGYWlsdXJlIT09ITEmJmNvbnNvbGUud2FybihgJHtHfTogYW5ub3VuY2UgZmFpbGVkIC0gJHtQZSh6ciwiIil9YCksa25bVV09bXQrMX1pZihNfHxpZSYmIUouaXNBY3RpdmV8fHNlJiZ0eXBlb2Ygc2UhPSJudW1iZXIiJiYic3RvcEFubm91bmNpbmciaW4gc2UpcmV0dXJuO3R5cGVvZiBzZT09Im51bWJlciI/KEouYW5ub3VuY2VJbnRlcnZhbHNbVV09c2Usd25bVV09c2UpOnNlJiYod25bVV09c2UubmV4dEFubm91bmNlTXMsbmV8fD1zZS5yZWFubm91bmNlT25EaXNjb25uZWN0PT09ITApO2xldCBsdD1QbltVXT8/MDtQbltVXT1sdCsxO2xldCB1dD13bltVXT8/aG4sZHQ9Y3NbbHRdO0llW1VdPXNldFRpbWVvdXQoKCk9PntMKFgsVSl9LHR5cGVvZiBkdD09Im51bWJlciI/TWF0aC5taW4odXQsZHQpOnV0KX07aXQ9KCk9PntvJiZ3LmZvckVhY2goYXN5bmMgWD0+e2xldCBVPWF3YWl0IFg7TXx8byhVLE8sRCx5bil9KX0sSi5yZXF1ZXVlQW5ub3VuY2U9KCk9PntJZS5mb3JFYWNoKF8pLEllLmxlbmd0aD0wLEVlPV8oRWUpLHRlLmlzQWN0aXZlfHx0ZS53YXJtdXAoKSxBZT8ucm9vbVRva2VuJiZwKFQsQWUucm9vbVRva2VuLCEwKSxFZT1zZXRUaW1lb3V0KGVuLGZzKSx3LmZvckVhY2goYXN5bmMoWCxVKT0+e2xldCBvZT1hd2FpdCBYO29lJiYhTSYmKFBuW1VdPTAsTChvZSxVKSl9KX0sY3QuZm9yRWFjaChhc3luYyhYLFUpPT57aWYoYXdhaXQgWCxNKXJldHVybjtsZXQgb2U9YXdhaXQgd1tVXTtvZSYmIU0mJighaWV8fEouaXNBY3RpdmUpJiZMKG9lLFUpfSl9KTtsZXQgdm49Vix7Y29tcG9zZTpxcn09dHIodi5wYXNzd29yZD8/IiIsVCxBKSxmdD1xcih6KSwkcj17Li4uZnQ/e29uUGVlckhhbmRzaGFrZTpmdH06e30sLi4uaj09PXZvaWQgMD97fTp7aGFuZHNoYWtlVGltZW91dE1zOmp9LGlzUGFzc2l2ZTppZSxvbkhhbmRzaGFrZUVycm9yOihPLEQpPT4kPy4oe2Vycm9yOkQucmVwbGFjZSgvXmhhbmRzaGFrZSBmYWlsZWQ6IC8sIiIpLGFwcElkOlQscGVlcklkOk8scm9vbUlkOkF9KX07aVtUXT8/PXt9O2xldCBXcj1sKFQpLEZyPXdyKE89PnZuPU8sTz0+e2lmKE0pcmV0dXJuO2xldCBEPUoucGVlclN0YXRlc1tPXTtEPy5jb25uZWN0ZWRQZWVyJiYoRC5jb25uZWN0ZWRQZWVyPW51bGwsY2UoRCksZW4oKSl9LCgpPT57TT0hMCx2bj1WO2xldCBPPXNbVF0/LltBXTtPPy5yb29tVG9rZW4mJihwKFQsTy5yb29tVG9rZW4sITEpLGRlbGV0ZSByW1RdPy5bTy5yb29tVG9rZW5dLHJbVF0mJiFRKHJbVF0pLmxlbmd0aCYmZGVsZXRlIHJbVF0pLHNbVF0mJihkZWxldGUgc1tUXVtBXSxRKHNbVF0pLmxlbmd0aHx8ZGVsZXRlIHNbVF0pLG1lKEoucGVlclN0YXRlcykuZm9yRWFjaCgoW0QsTF0pPT57aWYoTC5hbnN3ZXJpbmdFeHBpcnlUaW1lcj1fKEwuYW5zd2VyaW5nRXhwaXJ5VGltZXIpLEwuY29ubmVjdGVkUGVlciYmIUwuY29ubmVjdGVkUGVlci5pc0RlYWQpe2xldCBYPWtbRF07KCFYfHxYLnBlZXIhPT1MLmNvbm5lY3RlZFBlZXIpJiZMLmNvbm5lY3RlZFBlZXIuZGVzdHJveSgpfUwuYW5zd2VyaW5nUGVlciYmIUwuYW5zd2VyaW5nUGVlci5pc0RlYWQmJkwuYW5zd2VyaW5nUGVlci5kZXN0cm95KCkscWUoTCx0ZSksTC5jb25uZWN0ZWRQZWVyPW51bGwsTC5hbnN3ZXJpbmdQZWVyPW51bGwsY2UoTCl9KSxpW1RdJiYoZGVsZXRlIGlbVF1bQV0sUShpW1RdKS5sZW5ndGg9PT0wJiZkZWxldGUgaVtUXSksSWUuZm9yRWFjaChfKSxFZT1fKEVlKSxjdC5mb3JFYWNoKGFzeW5jIEQ9PnsoYXdhaXQgRCkoKX0pLCF1KCkmJihCPSExLHRlLmRlc3Ryb3koKSxDPW51bGwsSCgpLGIoVCkpfSwkcik7cmV0dXJuIEFlPXtyb29tVG9rZW46bnVsbCxyb29tVG9rZW5Qcm9taXNlOlMsYXR0YWNoU2hhcmVkUGVlclRvUm9vbTpXZSxzaG91bGRBZHZlcnRpc2U6KCk9PiFpZXx8Si5pc0FjdGl2ZX0sV3JbQV09QWUsUy50aGVuKE89PntsZXQgRD1BZTshRHx8TXx8c1tUXT8uW0FdIT09RHx8KEQucm9vbVRva2VuPU8sZihUKVtPXT1BLHdlKGspLmZvckVhY2goTD0+e0wucmVtb3RlUm9vbVRva2Vucy5oYXMoTykmJldlKEwucGVlcklkLEwpfSksKCFpZXx8Si5pc0FjdGl2ZSkmJnAoVCxPLCEwKSl9KSxpW1RdW0FdPUZyfX07dmFyIHVzPVsib2ZmZXIiLCJhbnN3ZXIiLCJjYW5kaWRhdGUiXSxkcz02ZTQsbXM9ZT0+e2lmKHR5cGVvZiBlPT0ic3RyaW5nIil0cnl7bGV0IG49aGUoZSk7cmV0dXJuIG4mJnR5cGVvZiBuPT0ib2JqZWN0Ij9uOm51bGx9Y2F0Y2h7cmV0dXJuIG51bGx9cmV0dXJuIGV9LFFuPShlLG4pPT50eXBlb2YgZVtuXT09InN0cmluZyImJmVbbl0/ZVtuXTp2b2lkIDAsZ3M9ZT0+dXMuc29tZShuPT5uIGluIGUmJih0eXBlb2YgZVtuXSE9InN0cmluZyJ8fGVbbl09PT0iIikpLGhzPWU9PntsZXQgbj1tcyhlKTtpZighbnx8Z3MobikpcmV0dXJuITE7bGV0IHQ9UW4obiwicGVlcklkIik7cmV0dXJuISEodCYmdCE9PVkmJm4ucGFzc2l2ZSE9PSEwJiYhUW4obiwiYW5zd2VyIikmJiFRbihuLCJjYW5kaWRhdGUiKSl9LGV0PWU9PntpZighZSl0aHJvdyBJKCJ0b3BpYyBzdHJhdGVneSBtaXNzaW5nIHJvb20gY29udGV4dCIpO3JldHVybiBlfSxCcj0oZSxuLHQsbyk9Pih7a2luZDpuLGFwcElkOmUuYXBwSWQscm9vbUlkOmUucm9vbUlkLHJvb3RUb3BpYzp0LHNlbGZUb3BpYzpvfSksbnQ9KGUsbix0LG8pPT4oe2tpbmQ6bixhcHBJZDplLmFwcElkLHJvb21JZDplLnJvb21JZCxyb290VG9waWM6dCxzZWxmVG9waWM6b30pLHR0PSh7c3RlYWR5QW5ub3VuY2VJbnRlcnZhbE1zOmU9ZHMscmVhbm5vdW5jZU9uRGlzY29ubmVjdDpuPSEwLGluaXQ6dCxzdWJzY3JpYmVUb3BpYzpvLHB1Ymxpc2hUb3BpYzppLHVucHVibGlzaFRvcGljOnN9KT0+WW4oe2luaXQ6dCxzdWJzY3JpYmU6YXN5bmMocixhLGMsdSxsLGYpPT57bGV0IGQ9ZXQoZiksZz0odixBKT0+e2kocix2LEEsbnQoZCwic2lnbmFsIixhLGMpKX0scD1udWxsLFI9ITEsYj1udWxsLEI9ITEsdz12PT57Unx8KFI9ITAsdigpKX0sQz0oKT0+KGJ8fChiPVByb21pc2UucmVzb2x2ZShvKHIsYywodixBKT0+e0J8fHUodixBLGcpfSxCcihkLCJzZWxmIixhLGMpKSkudGhlbih2PT57cD12LEImJncodil9KSksYik7ZC5pc1Bhc3NpdmV8fGF3YWl0IEMoKTtsZXQgSD1hd2FpdCBvKHIsYSxhc3luYyh2LEEpPT57Qnx8KGQuaXNQYXNzaXZlJiZocyhBKSYmYXdhaXQgQygpLEJ8fGF3YWl0IHUodixBLGcpKX0sQnIoZCwicm9vdCIsYSxjKSk7cmV0dXJuKCk9PntCPSEwLHAmJncocCksSCgpfX0sYW5ub3VuY2U6YXN5bmMocixhLGMsdSxsKT0+e2xldCBmPWV0KGwpLGQ9YXdhaXQgaShyLGEsWih7cGVlcklkOlksLi4udX0pLG50KGYsImFubm91bmNlIixhLGMpKTtyZXR1cm4gdHlwZW9mIGQ9PSJudW1iZXIifHxkIT09dm9pZCAwJiYic3RvcEFubm91bmNpbmciaW4gZD9kOntuZXh0QW5ub3VuY2VNczpkPy5uZXh0QW5ub3VuY2VNcz8/ZSxyZWFubm91bmNlT25EaXNjb25uZWN0OmQ/LnJlYW5ub3VuY2VPbkRpc2Nvbm5lY3Q/P259fSwuLi5zP3tkZWFjdGl2YXRlOihyLGEsYyx1KT0+e2xldCBsPWV0KHUpO3JldHVybiBzKHIsYSxudChsLCJhbm5vdW5jZSIsYSxjKSl9fTp7fX0pO3ZhciBEcj1qbihlPT5lLnNvY2tldCkscHM9NSxMcj0ieCIseHI9IkVWRU5UIix7c2VjcmV0S2V5OnlzLHB1YmxpY0tleTp3c309Q24ua2V5Z2VuKCksUHM9a2Uod3MpLEhyPXt9LGtzPXt9LHZzPXt9LE9yPTI1MCxwbj02ZTQsU3M9MTUqNmU0LGJzPTUzMzMsUWU9bmV3IFdlYWtNYXAsb3Q9bmV3IFdlYWtTZXQsSGU9bmV3IFdlYWtNYXAsQ3I9ZT0+e2xldCBuPVFlLmdldChlKSx0PU1hdGgubWluKG4/LmRlbGF5TXM/TWF0aC5tYXgocG4sbi5kZWxheU1zKjIpOnBuLFNzKTtyZXR1cm4gUWUuc2V0KGUse2RlbGF5TXM6dCx1bnRpbE1zOkRhdGUubm93KCkrdH0pLHR9LFRzPWU9PntsZXQgbj1RZS5nZXQoZSk7aWYoIW4pcmV0dXJuIDA7bGV0IHQ9bi51bnRpbE1zLURhdGUubm93KCk7cmV0dXJuIHQ+MD90OjB9LHJ0PWU9Pih7bmV4dEFubm91bmNlTXM6ZX0pLFJzPXtzdG9wQW5ub3VuY2luZzohMH0sQXM9ZT0+e2lmKG90LmhhcyhlKSlyZXR1cm4hMTtsZXQgbj1IZS5nZXQoZSk7cmV0dXJuIG4mJihjbGVhclRpbWVvdXQobi50aW1lciksSGUuZGVsZXRlKGUpKSxvdC5hZGQoZSksUWUuZGVsZXRlKGUpLGUuY2xvc2U/LigpLCEwfSxFcz0oZSxuKT0+e2xldCB0PUhlLmdldChlKTt0JiYoY2xlYXJUaW1lb3V0KHQudGltZXIpLHQuZXZlbnRJZHMuYWRkKG4pKTtsZXQgbz10Py5ldmVudElkcz8/bmV3IFNldChbbl0pLGk9c2V0VGltZW91dCgoKT0+e0hlLmRlbGV0ZShlKX0sYnMpO0hlLnNldChlLHtldmVudElkczpvLHRpbWVyOml9KX0sTXM9KGUsbik9PntsZXQgdD1IZS5nZXQoZSk7cmV0dXJuIHQ/LmV2ZW50SWRzLmhhcyhuKT8oY2xlYXJUaW1lb3V0KHQudGltZXIpLEhlLmRlbGV0ZShlKSwhMCk6ITF9LHN0PSgpPT5NYXRoLmZsb29yKERhdGUubm93KCkvMWUzKSxhdD1lPT52c1tlXT8/PWNuKGUsMWU0KSsyZTQsQnM9YXN5bmMoZSxuKT0+e2xldCB0PXtraW5kOmF0KGUpLHRhZ3M6W1tMcixlXV0sY3JlYXRlZF9hdDpzdCgpLGNvbnRlbnQ6bixwdWJrZXk6UHN9LG89YXdhaXQgTGUoIlNIQS0yNTYiLFooWzAsdC5wdWJrZXksdC5jcmVhdGVkX2F0LHQua2luZCx0LnRhZ3MsdC5jb250ZW50XSkpO3JldHVybiBaKFt4cix7Li4udCxpZDprZShvKSxzaWc6a2UoYXdhaXQgQ24uc2lnbkFzeW5jKG8seXMpKX1dKX0seGE9KGUsbik9PihIcltlXT1uLFooWyJSRVEiLGUse2tpbmRzOlthdChuKV0sc2luY2U6c3QoKSwiI3giOltuXX1dKSksX2U9e30sX3I9ZT0+e2UuZmx1c2hXYWl0ZXJzLmZvckVhY2gobj0+bigpKSxlLmZsdXNoV2FpdGVycy5jbGVhcigpfSxPcz0oZSxuLHQpPT57bGV0IG89X2VbZS51cmxdPz89e3N1YklkczpbXSx0b3BpY3M6bmV3IE1hcCx1cGRhdGVUaW1lcjpudWxsLGZsdXNoV2FpdGVyczpuZXcgU2V0fTtvLnRvcGljcy5zZXQobix0KSxJcihlLG8pfSxDcz0oZSxuKT0+e2xldCB0PV9lW2UudXJsXTt0JiYodC50b3BpY3MuZGVsZXRlKG4pLHQudG9waWNzLnNpemU9PT0wPyh0LnVwZGF0ZVRpbWVyIT09bnVsbCYmKGNsZWFyVGltZW91dCh0LnVwZGF0ZVRpbWVyKSx0LnVwZGF0ZVRpbWVyPW51bGwpLF9yKHQpLHQuc3ViSWRzLmZvckVhY2gobz0+ZS5zZW5kKFooWyJDTE9TRSIsb10pKSksZGVsZXRlIF9lW2UudXJsXSk6SXIoZSx0KSl9LElyPShlLG4pPT57bi51cGRhdGVUaW1lcj09PW51bGwmJihuLnVwZGF0ZVRpbWVyPXNldFRpbWVvdXQoKCk9PntuLnVwZGF0ZVRpbWVyPW51bGw7dHJ5e05yKGUpfWZpbmFsbHl7X3Iobil9fSwwKSl9LERzPWU9PntsZXQgbj1fZVtlLnVybF07cmV0dXJuIW58fG4udXBkYXRlVGltZXI9PT1udWxsP1Byb21pc2UucmVzb2x2ZSgpOm5ldyBQcm9taXNlKHQ9Pm4uZmx1c2hXYWl0ZXJzLmFkZCh0KSl9LE5yPWU9PntsZXQgbj1fZVtlLnVybF07aWYoIW58fG4udG9waWNzLnNpemU9PT0wKXJldHVybjtsZXQgdD1bLi4ubi50b3BpY3Mua2V5cygpXSxvPVtdLGk9c3QoKTtmb3IobGV0IHM9MDtzPHQubGVuZ3RoO3MrPU9yKW8ucHVzaCh0LnNsaWNlKHMscytPcikpO2Zvcig7bi5zdWJJZHMubGVuZ3RoPm8ubGVuZ3RoOyl7bGV0IHM9bi5zdWJJZHMucG9wKCk7cyYmZS5zZW5kKFooWyJDTE9TRSIsc10pKX1vLmZvckVhY2goKHMscik9PntsZXQgYT1uLnN1Yklkc1tyXT8/PWxlKDY0KTtlLnNlbmQoWihbIlJFUSIsYSx7a2luZHM6Wy4uLm5ldyBTZXQocy5tYXAoYXQpKV0sc2luY2U6aSwiI3giOnN9XSkpfSl9LExzPWU9PntsZXQgbj1fZVtlLnVybF07biYmbi50b3BpY3Muc2l6ZT4wJiZOcihlKX0sSGE9dHQoe2luaXQ6ZT0+SW4oZSx4cyxwcywhMCkubWFwKG49PntsZXQgdD1Eci5yZWdpc3RlcihuLCgpPT5LbihuLG89PntsZXRbaSxzLHIsYV09aGUobyk7aWYoaSE9PXhyKXtsZXQgYz1gJHtHfTogcmVsYXkgZmFpbHVyZSBmcm9tICR7dC51cmx9IC0gYCx1PWk9PT0iQ0xPU0VEIiYmdHlwZW9mIHI9PSJzdHJpbmciP3I6YSxsPWk9PT0iT0siJiZyPT09ITEsZj1sJiZ1Py5zdGFydHNXaXRoKCJyYXRlLWxpbWl0ZWQ6IiksZD1sJiZ1Py5zdGFydHNXaXRoKCJkdXBsaWNhdGU6IiksZz1pPT09IkNMT1NFRCJ8fGwmJiFmJiYhZCxwPWk9PT0iT0siJiZNcyh0LHMpO2lmKGcmJiFBcyh0KSlyZXR1cm47Zj9Dcih0KTpwJiZRZS5kZWxldGUodCksIWQmJmUucmVsYXlDb25maWc/Lndhcm5PblJlbGF5RmFpbHVyZSE9PSExJiYoaT09PSJOT1RJQ0UiP2NvbnNvbGUud2FybihjK3MpOihsfHxpPT09IkNMT1NFRCIpJiZjb25zb2xlLndhcm4oYyt1KSk7cmV0dXJufWlmKHImJnR5cGVvZiByPT0ib2JqZWN0IiYmImNvbnRlbnQiaW4gcil7bGV0e2NvbnRlbnQ6Y309cix1PWtzW3NdO2lmKHUpe3UoSHJbc10/PyIiLGMpO3JldHVybn1sZXQgbD1fZVt0LnVybF07aWYobD8uc3ViSWRzLmluY2x1ZGVzKHMpJiZyLnRhZ3Mpe2xldCBmPXIudGFncy5maW5kKGQ9PmRbMF09PT1Mcik7Zj8uWzFdJiZsLnRvcGljcy5nZXQoZlsxXSk/LihmWzFdLGMpfX19LCgpPT5Mcyh0KSkpO3JldHVybiB0LnJlYWR5fSksc3Vic2NyaWJlVG9waWM6KGUsbix0LG8pPT57T3MoZSxuLChyLGEpPT57dChyLGEpfSk7bGV0IHM9KCk9PntDcyhlLG4pfTtyZXR1cm4gby5raW5kPT09InJvb3QiP0RzKGUpLnRoZW4oKCk9PnMpOnN9LHB1Ymxpc2hUb3BpYzphc3luYyhlLG4sdCxvKT0+e2lmKG90LmhhcyhlKXx8ZS5pc0Nsb3NlZClyZXR1cm4gby5raW5kPT09ImFubm91bmNlIj9Sczp2b2lkIDA7aWYoby5raW5kPT09ImFubm91bmNlIil7bGV0IGE9VHMoZSk7aWYoYT4wKXJldHVybiBydChNYXRoLm1heChwbixhKSl9bGV0IGk9YXdhaXQgQnMobix0eXBlb2YgdD09InN0cmluZyI/dDpaKHQpKSxzPWUuc29ja2V0LnJlYWR5U3RhdGU9PT0xO2lmKGUuc2VuZChpKSxvLmtpbmQhPT0iYW5ub3VuY2UiKXJldHVybjtpZighcylyZXR1cm4gcnQoQ3IoZSkpO2xldCByPWhlKGkpWzFdLmlkO3JldHVybiBFcyhlLHIpLHJ0KHBuKX19KSxfYT1Eci5nZXRTb2NrZXRzLHhzPVsiYmFzc3Bpc3RvbC5vcmciLCJidWNrZXQuY29yYWNsZS5zb2NpYWwiLCJjaG9ydXMucGp2Lm1lIiwia29ydS5iaXRjb2ludHhva28ub3JnIiwibm9zLmxvbCIsIm5vc3RyLTAxLnVpZC5vdmgiLCJub3N0ci0wMS55YWtpaG9ubmUuY29tIiwibm9zdHItcmVsYXkuY29yYi5uZXQiLCJub3N0ci5kYXRhLmhhdXMiLCJub3N0ci5pc2xhbmRhcmVhLm5ldCIsIm5vc3RyLnNhdGhvYXJkZXIuY29tIiwibm9zdHIudGVnaWxhLmNvbS5iciIsIm5vc3RyLnZ1bHBlbS5jb20iLCJwdXJwbGVyZWxheS5jb20iLCJyZWxheS1jYW4uem9tYmkuY2xvdWRyb2Rpb24uY29tIiwicmVsYXktcnBpLmVkdWZlZWQub3JnIiwicmVsYXkuYWdvcmlzdC5zcGFjZSIsInJlbGF5LmFydGlvLmluZi51bmliZS5jaCIsInJlbGF5Lm1vc3RyLnB1YiIsInJlbGF5Lm1vc3Ryby5uZXR3b3JrIiwicmVsYXkuc2lnaXQuaW8iLCJyZWxheTAyLmxuZmkubmV0d29yayIsInNjaG5vcnIubWUiLCJzb2NpYWwuYW1hbmFoLmVibGVzc2luZy5jbyIsInN0YWdpbmcueWFidS5tZSIsInN0cmZyeS5zaG9jay5uZXR3b3JrIiwidG9wLnRlc3RyZWxheS50b3AiLCJ5YWJ1Lm1lL3YyIl0ubWFwKGU9PiJ3c3M6Ly8iK2UpO2V4cG9ydHtCcyBhcyBjcmVhdGVFdmVudCx4cyBhcyBkZWZhdWx0UmVsYXlVcmxzLF9hIGFzIGdldFJlbGF5U29ja2V0cyxIYSBhcyBqb2luUm9vbSxObiBhcyBwYXVzZVJlbGF5UmVjb25uZWN0aW9uLFVuIGFzIHJlc3VtZVJlbGF5UmVjb25uZWN0aW9uLFkgYXMgc2VsZklkLHhhIGFzIHN1YnNjcmliZX07Ci8qISBCdW5kbGVkIGxpY2Vuc2UgaW5mb3JtYXRpb246CgpAbm9ibGUvc2VjcDI1NmsxL2luZGV4LmpzOgogICgqISBub2JsZS1zZWNwMjU2azEgLSBNSVQgTGljZW5zZSAoYykgMjAxOSBQYXVsIE1pbGxlciAocGF1bG1pbGxyLmNvbSkgKikKKi8KLy8jIHNvdXJjZU1hcHBpbmdVUkw9bm9zdHIuYnVuZGxlLm1qcy5tYXA=';
+
+
+// ---- おうむ返しボット用のページ（/bot）----
+const BOT_HTML = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>おうむ返しボット - ぽちっと通話</title>
+  <style>
+    :root { --bg: #1a1e24; --card: #252b36; --text: #f3f4f6; --muted: #9ca3af; --ok: #10b981; --tx: #ef4444; --acc: #3b82f6; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 16px; display: flex; justify-content: center; }
+    .wrap { width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 14px; }
+    .card { background: var(--card); border: 2px solid #374151; border-radius: 18px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+    h1 { font-size: 1.1rem; color: #93c5fd; }
+    .muted { color: var(--muted); font-size: 0.85rem; }
+    button { background: #374151; color: #fff; border: none; border-radius: 10px; padding: 12px; font-size: 1rem; font-weight: 700; cursor: pointer; }
+    button.primary { background: #2563eb; }
+    button:disabled { opacity: .5; cursor: default; }
+    .status { font-family: monospace; font-size: 1.05rem; font-weight: 800; }
+    .status.on { color: var(--ok); }
+    .url { font-size: 0.78rem; word-break: break-all; user-select: text; color: #93c5fd; }
+    .peer { display: flex; justify-content: space-between; gap: 8px; font-size: 0.9rem; padding: 6px 10px; background: #1e293b; border-radius: 8px; }
+    .peer.rec { background: #7f1d1d; } .peer.reply { background: #064e3b; }
+    #log { font-family: monospace; font-size: 0.75rem; color: var(--muted); max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>おうむ返しボット</h1>
+      <p class="muted">この部屋で話した人の声を録音して、その人にだけ返します。このタブを開いたままにしてください。</p>
+      <div class="status" id="status">停止中</div>
+      <div class="muted" id="health"></div>
+      <button class="primary" id="startBtn" type="button" disabled>読み込み中…</button>
+      <div class="muted">招待URL（通話テスト用の部屋。通常のページの、設定からも入れます）</div>
+      <div class="url" id="inviteUrl"></div>
+    </div>
+    <div class="card">
+      <div class="muted">いま接続している人</div>
+      <div id="peers"><span class="muted">（まだいません）</span></div>
+    </div>
+    <div class="card">
+      <div class="muted">ログ</div>
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <script>
+    // ブラウザの接続オブジェクト（RTCPeerConnection）は、ページあたり約500本が上限。数を数えておき、増えすぎたら、つなぎ直す
+    window.pcStat = { created: 0, closed: 0 };
+    // 失敗した接続のエラーは、よく出る（相手の回線のせい。通話の仕組み側の、後片付けの順序の問題）。
+    // 画面とコンソールを埋めないよう、一番最初から数えるだけにする
+    window.ignoredErrors = 0;
+    window.isNoisyError = function (msg) {
+      return /so many PeerConnections|Connection failed|ICE failed|User-Initiated Abort|Close called|InvalidStateError|wrong state|setRemoteDescription|Cannot read properties of null|localDescription|Failed to execute .(addIceCandidate|createAnswer|createOffer)/i.test(msg || '');
+    };
+    window.addEventListener('error', function (e) { if (window.isNoisyError(e.message || (e.error && e.error.message))) { e.preventDefault(); window.ignoredErrors++; } }, true);
+    window.addEventListener('unhandledrejection', function (e) { const r = e.reason; if (window.isNoisyError(r && (r.message || String(r)))) { e.preventDefault(); window.ignoredErrors++; } }, true);
+    (function () {
+      const O = window.RTCPeerConnection;
+      if (!O) return;
+      window.RTCPeerConnection = class extends O {
+        constructor(...a) {
+          super(...a);
+          window.pcStat.created++;
+          const c = this.close.bind(this);
+          let done = false;
+          this.close = function () { if (!done) { done = true; window.pcStat.closed++; } return c(); };
+        }
+      };
+    })();
+  </script>
+  <script type="module">
+    import { joinRoom } from '/vendor/trystero-0.25.4.mjs';
+
+    const APP_ID = 'pochitalk-v2';
+    const BOT_NAME = 'おうむ返しボット';
+    const BOT_TAG = '🦜 話すと、あなたにだけ声が返ります';
+    const ALL_RELAYS = ['wss://relay.primal.net', 'wss://purplerelay.com', 'wss://bucket.coracle.social', 'wss://yabu.me/v2', 'wss://x.kojira.io', 'wss://relay.notoshi.win', 'wss://relay.ditto.pub'];
+    // 使うリレーは、起動時に動いているものを選ぶ（最大5本）。全部を使わないことで、接続の作り直しの量を減らす
+    let RELAYS = ALL_RELAYS.slice(0, 5);
+    // 起動時に、各リレーに実際につないでみて、動いているものだけを選ぶ（落ちているリレーは、つなぎ直しを繰り返して、エラーを出し続けるため）
+    function probeRelay(url) {
+      return new Promise(function (resolve) {
+        let settled = false, ws = null, timer = null;
+        const done = function (ok) { if (!settled) { settled = true; clearTimeout(timer); resolve(ok); } };
+        try { ws = new WebSocket(url); } catch (_) { done(false); return; }
+        // 時間切れでも、ソケットは閉じない（接続中に閉じると、ブラウザが警告を出し続けるため）。あとで開いたら、そのとき閉じる
+        timer = setTimeout(function () { done(false); }, 6000);
+        ws.onopen = function () { done(true); try { ws.close(); } catch (_) {} };
+        ws.onerror = function () { done(false); };
+        ws.onclose = function () { done(false); };
+      });
+    }
+    const sleepMs = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+    async function pickRelays() {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const res = await Promise.all(ALL_RELAYS.map(function (u) { return probeRelay(u).then(function (ok) { return { u: u, ok: ok }; }); }));
+        const alive = res.filter(function (r) { return r.ok; }).map(function (r) { return r.u; }).sort(function () { return Math.random() - 0.5; });
+        log('使えるリレー: ' + alive.length + ' / ' + ALL_RELAYS.length + '（落ちているリレーは使いません）');
+        if (alive.length >= 1) return alive.slice(0, 3); // 接続の準備の数は、リレーの数に比例する。動いているものを3本まで使う
+        log('使えるリレーがありません。10秒後にもう一度確かめます');
+        await sleepMs(10000);
+      }
+      log('リレーを確認できなかったため、すべてのリレーを使います');
+      return ALL_RELAYS;
+    }
+    const qkey = (new URLSearchParams(location.search).get('r') || '').trim().toLowerCase();
+    const BOT_KEY = /^[0-9a-f]{8}$/.test(qkey) ? qkey : '7a0b07c1';
+    const MIN_MS = 350, MAX_MS = 40000, REPLY_DELAY_MS = 250;
+    const botSince = Date.now();
+    // ロビー（アプリを開いている全員と、つなごうとする仕組み）は、人が多いと、接続の準備が大量に溜まる。ボットは、招待URLで入ってもらえば足りるので、通常は入らない
+    const BOT_VERSION = '__VERSION__'; // 貼り付けた版が最新か、画面で確認するための印
+
+    const $ = function (id) { return document.getElementById(id); };
+    function fmt(k) { return k.slice(0, 4).toUpperCase() + '·' + k.slice(4).toUpperCase(); }
+    function log(msg) {
+      const d = document.createElement('div');
+      d.textContent = new Date().toLocaleTimeString() + '  ' + msg;
+      const box = $('log');
+      box.appendChild(d);
+      while (box.children.length > 60) box.removeChild(box.firstChild);
+      box.scrollTop = box.scrollHeight;
+    }
+    $('inviteUrl').textContent = location.origin + '/?r=' + BOT_KEY;
+
+    // 失敗した接続のエラーは、よく出る（相手の回線のせい）。画面とコンソールを埋めないよう、数えるだけにする
+    function liveConnections() { return window.pcStat.created - window.pcStat.closed; }
+    function showHealth() {
+      const mode = hasTurn ? (FORCE_RELAY ? 'TURN 中継固定' : 'TURN あり（直接を優先）') : 'STUN 直接';
+      $('health').textContent = '接続方式: ' + mode + ' / 一覧への在室通知: ' + (typeof presenceSocks === 'function' ? presenceSocks() : 0) + ' 本のリレーに送信中' + ' / この部屋: ' + peers.size + ' 人'
+        + ' / 接続オブジェクト: ' + liveConnections() + ' 本 / 無視した接続エラー: ' + window.ignoredErrors + ' 件 / 版: ' + BOT_VERSION;
+    }
+
+    // 接続設定（Cloudflare TURN が取れれば、中継固定。取れなければ STUN の直接接続）
+    const rtcConf = { iceServers: [{ urls: 'stun:stun.cloudflare.com:3478' }, { urls: 'stun:stun.l.google.com:19302' }] }; // Trystero 0.25.4: そのまま RTCPeerConnection の設定
+    async function loadIce() {
+      try {
+        const res = await fetch('/api/turn', { cache: 'no-store' });
+        if (!res.ok) return hasTurn;
+        const data = await res.json();
+        if (data && Array.isArray(data.iceServers) && data.iceServers.length) {
+          rtcConf.iceServers = data.iceServers.concat([{ urls: 'stun:stun.l.google.com:19302' }]);
+          hasTurn = true;
+          rtcConf.iceTransportPolicy = FORCE_RELAY ? 'relay' : 'all'; // 通常は、直接を優先し、つながらないときだけ中継
+        }
+      } catch (_) {}
+      return hasTurn;
+    }
+    const FORCE_RELAY = new URLSearchParams(location.search).has('relay');
+    let hasTurn = false;   // TURN の鍵が取れているか
+    let usedRelay = false; // いまの接続が、TURN ありで作られているか
+
+    let ctx = null, room = null, lobby = null, started = false, watchdog = null, wake = null;
+    let sendState = null, sendName = null, sendAge = null, sendTag = null, sendPresence = null;
+    const peers = new Map(); // id -> { name, talking, stream, audio, dest, rec, reply }
+
+
+    // Trystero 0.25.4 の API 差を吸収する小さな部品（0.20.0 の書き方のまま、呼び出し側を動かすため）
+    //  ・makeAction は、{ send, onMessage } を返す。受信は onMessage(data, { peerId })。送信は send(data, { target })
+    //  ・onPeerJoin / onPeerLeave / onPeerStream は、関数を代入して設定する
+    function actionOf(r, id) {
+      const a = r.makeAction(id);
+      return [
+        function (data, peerId) { return a.send(data, peerId ? { target: peerId } : undefined); },
+        function (handler) { a.onMessage = function (data, info) { handler(data, info && info.peerId); }; }
+      ];
+    }
+    function setHandler(r, name, fn) { r[name] = fn; }
+
+    function renderPeers() {
+      const box = $('peers');
+      box.innerHTML = '';
+      if (!peers.size) { box.innerHTML = '<span class="muted">（まだいません）</span>'; return; }
+      peers.forEach(function (p) {
+        const row = document.createElement('div');
+        row.className = 'peer' + (p.reply ? ' reply' : (p.rec ? ' rec' : ''));
+        const n = document.createElement('span'); n.textContent = p.name || '接続中…';
+        const s = document.createElement('span'); s.textContent = p.reply ? '返信中' : (p.rec ? '録音中' : '待機');
+        row.appendChild(n); row.appendChild(s);
+        box.appendChild(row);
+      });
+    }
+
+    function stopReply(id, p) {
+      if (!p.reply) return;
+      try { p.reply.src.onended = null; p.reply.src.stop(); } catch (_) {}
+      clearTimeout(p.reply.timer);
+      p.reply = null;
+      if (sendState) sendState({ isTalking: false }, id);
+      renderPeers();
+    }
+
+    function startRec(id, p) {
+      if (!p.stream) { log((p.name || id.slice(0, 5)) + ': 音声がまだ届いていません'); return; }
+      const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(function (m) { return window.MediaRecorder && MediaRecorder.isTypeSupported(m); });
+      let mr;
+      try { mr = mime ? new MediaRecorder(p.stream, { mimeType: mime }) : new MediaRecorder(p.stream); } catch (e) { log('録音を始められません: ' + e.message); return; }
+      const rec = { mr: mr, chunks: [], start: Date.now(), timer: null, mime: mr.mimeType };
+      mr.ondataavailable = function (e) { if (e.data && e.data.size) rec.chunks.push(e.data); };
+      mr.start();
+      rec.timer = setTimeout(function () { stopRec(id, p); }, MAX_MS);
+      p.rec = rec;
+      renderPeers();
+    }
+
+    function stopRec(id, p) {
+      const rec = p.rec;
+      if (!rec) return;
+      p.rec = null;
+      clearTimeout(rec.timer);
+      const ms = Date.now() - rec.start;
+      rec.mr.onstop = async function () {
+        renderPeers();
+        if (ms < MIN_MS || !rec.chunks.length || !peers.has(id)) return;
+        try {
+          const blob = new Blob(rec.chunks, { type: rec.mime || 'audio/webm' });
+          const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
+          playBack(id, p, buf, ms);
+        } catch (e) { log((p.name || id.slice(0, 5)) + ': 録音を読み取れませんでした（' + e.message + '）'); }
+      };
+      try { rec.mr.stop(); } catch (_) { renderPeers(); }
+    }
+
+    function playBack(id, p, buf, ms) {
+      if (!peers.has(id) || p.talking) return; // 返す前に、また話し始めたら返さない
+      stopReply(id, p);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(p.dest);
+      const reply = { src: src, timer: null };
+      p.reply = reply;
+      reply.timer = setTimeout(function () {
+        if (p.reply !== reply) return;
+        if (sendState) sendState({ isTalking: true }, id);
+        src.onended = function () {
+          if (p.reply === reply) { p.reply = null; if (sendState) sendState({ isTalking: false }, id); renderPeers(); }
+        };
+        src.start();
+        log((p.name || id.slice(0, 5)) + ': ' + (ms / 1000).toFixed(1) + '秒の声を返しています');
+        renderPeers();
+      }, REPLY_DELAY_MS);
+      renderPeers();
+    }
+
+    function joinBotRoom() {
+      room = joinRoom({ appId: APP_ID, relayConfig: { urls: RELAYS, warnOnRelayFailure: false }, rtcConfig: rtcConf }, 'h-' + BOT_KEY);
+      const st = actionOf(room, 'pttState'), nm = actionOf(room, 'pttName'), ag = actionOf(room, 'joinAge'), tg = actionOf(room, 'roomTag');
+      sendState = st[0]; sendName = nm[0]; sendAge = ag[0]; sendTag = tg[0];
+      nm[1](function (name, id) { const p = peers.get(id); if (p) { p.name = String(name).slice(0, 20); renderPeers(); } });
+      st[1](function (state, id) {
+        const p = peers.get(id);
+        if (!p || !state) return;
+        p.talking = !!state.isTalking;
+        if (p.talking) { stopReply(id, p); startRec(id, p); } else { stopRec(id, p); }
+      });
+      setHandler(room, 'onPeerJoin', function (id) {
+        const dest = ctx.createMediaStreamDestination();
+        peers.set(id, { name: '', talking: false, stream: null, audio: null, dest: dest, rec: null, reply: null });
+        room.addStream(dest.stream, { target: id }); // 返事は、この人専用の音声として送る
+        sendName(BOT_NAME, id);
+        sendAge({ age: 3600 * 1000 }, id); // 古株として見せる（入室音を鳴らさせない）
+        sendTag({ tag: BOT_TAG, by: BOT_NAME, at: botSince }, id);
+        renderPeers();
+        log('参加: ' + id.slice(0, 5));
+      });
+      setHandler(room, 'onPeerLeave', function (id) {
+        const p = peers.get(id);
+        if (p) { stopReply(id, p); if (p.rec) { clearTimeout(p.rec.timer); try { p.rec.mr.stop(); } catch (_) {} } if (p.audio) { p.audio.srcObject = null; } }
+        peers.delete(id);
+        renderPeers();
+        log('退出: ' + ((p && p.name) || id.slice(0, 5)));
+      });
+      setHandler(room, 'onPeerStream', function (stream, id) {
+        const p = peers.get(id);
+        if (!p) return;
+        p.stream = stream;
+        // 受信音声は、再生要素につないでおかないと、ブラウザが流してくれないことがある（音量0で再生）
+        const a = new Audio();
+        a.srcObject = stream; a.volume = 0;
+        a.play().catch(function () {});
+        p.audio = a;
+      });
+    }
+
+
+    let busy = false;
+    async function reconnect(reason) {
+      if (busy) return;
+      busy = true;
+      try { await reconnectInner(reason); } finally { busy = false; }
+    }
+    async function reconnectInner(reason) {
+      log('つなぎ直します（' + reason + '）');
+      const oldRoom = room, oldLobby = lobby;
+      room = null; lobby = null;
+      peers.forEach(function (p, id) { stopReply(id, p); });
+      peers.clear(); renderPeers();
+      try { await Promise.all([oldRoom ? oldRoom.leave() : null, oldLobby ? oldLobby.leave() : null]); } catch (_) {}
+      await new Promise(function (r) { setTimeout(r, 400); });
+      await loadIce();
+      usedRelay = hasTurn;
+      joinBotRoom();
+    }
+
+    // ---------- 部屋の一覧への在室通知（Nostr のリレーに送るだけ。WebRTC は使わない）----------
+    const PRESENCE_KIND = 29334, PRESENCE_TOPIC = 'pochitalk-presence-v1';
+    const pub = { schnorr: null, priv: null, key: '', socks: new Map(), retry: new Map(), timer: null };
+    function hexOf(b) { return Array.from(b).map(function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join(''); }
+    async function pubInit() {
+      if (pub.schnorr) return true;
+      try {
+        const mod = await import('https://esm.sh/@noble/curves@1.4.0/secp256k1');
+        pub.schnorr = mod.schnorr;
+        pub.priv = pub.schnorr.utils.randomPrivateKey();
+        pub.key = hexOf(pub.schnorr.getPublicKey(pub.priv));
+        return true;
+      } catch (_) { return false; }
+    }
+    async function pubEvent(obj) {
+      const tags = [['x', PRESENCE_TOPIC]];
+      const created = Math.floor(Date.now() / 1000);
+      const content = JSON.stringify(obj);
+      const ser = JSON.stringify([0, pub.key, created, PRESENCE_KIND, tags, content]);
+      const id = hexOf(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ser))));
+      const sig = hexOf(await pub.schnorr.sign(id, pub.priv));
+      return JSON.stringify(['EVENT', { id: id, pubkey: pub.key, created_at: created, kind: PRESENCE_KIND, tags: tags, content: content, sig: sig }]);
+    }
+    async function pubSend() {
+      if (!(await pubInit())) return;
+      const ev = await pubEvent({ ch: BOT_KEY, talking: false, name: BOT_NAME, tag: BOT_TAG, by: BOT_NAME, at: botSince });
+      pub.socks.forEach(function (ws) { if (ws.readyState === 1) { try { ws.send(ev); } catch (_) {} } });
+    }
+    function pubOpen(url) {
+      if (pub.socks.has(url)) return;
+      let ws; try { ws = new WebSocket(url); } catch (_) { return; }
+      pub.socks.set(url, ws);
+      ws.onopen = function () { pub.retry.set(url, 5000); pubSend(); };
+      ws.onclose = function () {
+        pub.socks.delete(url);
+        const wait = Math.min(pub.retry.get(url) || 5000, 300000);
+        pub.retry.set(url, wait * 2);
+        setTimeout(function () { pubOpen(url); }, wait);
+      };
+    }
+    function startPresencePublisher() {
+      RELAYS.forEach(pubOpen);
+      if (!pub.timer) pub.timer = setInterval(pubSend, 6000);
+    }
+    function presenceSocks() { let n = 0; pub.socks.forEach(function (w) { if (w.readyState === 1) n++; }); return n; }
+
+    async function start() {
+      if (started) return;
+      started = true;
+      $('startBtn').disabled = true;
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      await ctx.resume();
+      RELAYS = await pickRelays();
+      for (let i = 0; i < 4 && !(await loadIce()); i++) { await sleepMs(2000); } // 回線の調子が悪くても、鍵を取れるまで少しやり直す
+      usedRelay = hasTurn;
+      joinBotRoom();
+      startPresencePublisher();
+      $('status').textContent = '稼働中：' + fmt(BOT_KEY);
+      $('status').className = 'status on';
+      showHealth();
+      log('開始しました（' + (hasTurn ? (FORCE_RELAY ? 'TURN 中継固定' : 'TURN あり・直接を優先') : 'STUN 直接') + '）');
+      // 見張り: 10分ごとに TURN の認証情報を取り直し、誰ともつながっていなければ、つなぎ直す
+      watchdog = setInterval(async function () {
+        await loadIce();
+        if (peers.size === 0) reconnect('定期');
+      }, 10 * 60 * 1000);
+      window.addEventListener('online', function () { reconnect('回線が戻りました'); });
+      // 5秒ごとに、接続オブジェクトの数を見張る。増えすぎたら（上限の約500本の手前で）、全部作り直す
+      const recent = [];
+      let lastGuardAt = 0;
+      setInterval(function () {
+        showHealth();
+        recent.push(window.pcStat.created);
+        if (recent.length > 12) recent.shift();
+        const lastMinute = window.pcStat.created - recent[0];
+        // ブラウザの上限は約500本。手前の400本、または1分に1500本を超えたときだけ作り直す（作り直しの直後90秒は、見送る）
+        if (!busy && Date.now() - lastGuardAt > 90000 && (liveConnections() > 400 || lastMinute > 1500)) { lastGuardAt = Date.now(); reconnect('接続が増えすぎました（' + liveConnections() + '本）'); }
+      }, 5000);
+      // 起動時に TURN の鍵が取れず、STUN 直接で始めたときは、あとで取れたら、中継に切り替える（通常のページは、中継固定のため）
+      setInterval(async function () {
+        if (usedRelay || busy) return;
+        if (await loadIce()) reconnect('TURN の鍵が取れたので、中継に切り替えます');
+      }, 30000);
+      // タブが止められないよう、ロックを持ち続ける（対応していれば）
+      try { navigator.locks.request('pochitalk-bot', function () { return new Promise(function () {}); }); } catch (_) {}
+      // 画面を消さない（対応していれば）
+      const lockScreen = async function () { try { wake = await navigator.wakeLock.request('screen'); } catch (_) {} };
+      lockScreen();
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) lockScreen(); });
+    }
+    $('startBtn').addEventListener('click', start);
+    $('startBtn').disabled = false; // 通話の部品の読み込みが終わった
+    $('startBtn').textContent = '開始';
+  </script>
+</body>
+</html>`;
+
+
+
+// TURN の鍵は、このファイルに書かない。Worker の「変数とシークレット」に TURN_KEY_ID（テキスト）と TURN_API_TOKEN（シークレット）を登録する。
+// 未設定のときは、空の iceServers を返し、ページは STUN の直接接続で動く。
+async function handleTurn(request, url, env) {
+  const origin = request.headers.get('Origin');
+  if (origin && origin !== url.origin) return new Response('forbidden', { status: 403 });
+  const keyId = env && env.TURN_KEY_ID, token = env && env.TURN_API_TOKEN;
+  if (!keyId || !token) return new Response(JSON.stringify({ iceServers: [] }), { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+  const res = await fetch(
+    'https://rtc.live.cloudflare.com/v1/turn/keys/' + encodeURIComponent(keyId) + '/credentials/generate-ice-servers',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ ttl: 86400 })
+    }
+  );
+  const text = await res.text();
+  if (!res.ok) return new Response(text, { status: res.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+  // TURN の接続先は、2つに絞る（UDP 3478 と、TLS 443）。通話の仕組みは、相手を見つけるたびに、接続の準備を作る。
+  // 準備ごとに、TURN の接続先の数だけ割り当てが走るので、多いと詰まって、準備に10秒以上かかり、接続に失敗する
+  let body = text;
+  try {
+    const j = JSON.parse(text);
+    j.iceServers = (j.iceServers || []).map(function (sv) {
+      const urls = [].concat(sv.urls || []);
+      if (!urls.some(function (u) { return /^turns?:/.test(u); })) return sv;
+      const keep = urls.filter(function (u) { return u === 'turn:turn.cloudflare.com:3478?transport=udp' || u === 'turns:turn.cloudflare.com:443?transport=tcp'; });
+      return Object.assign({}, sv, { urls: keep.length ? keep : urls.slice(0, 2) });
+    });
+    body = JSON.stringify(j);
+  } catch (_) {}
+  return new Response(body, { status: res.status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+}
+
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === '/api/turn') return handleTurn(request, url, env);
+    if (url.pathname === '/version') return new Response(JSON.stringify({ version: APP_VERSION, trystero: '0.25.4' }), { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
+    if (url.pathname === '/vendor/trystero-0.25.4.mjs') return new Response(bytes(TRYSTERO_B64), { headers: { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=31536000, immutable' } });
+    if (url.pathname === '/bot') return new Response(BOT_HTML.split('__VERSION__').join(APP_VERSION), { headers: { 'Content-Type': 'text/html;charset=UTF-8', 'Cache-Control': 'no-cache' } });
     switch (url.pathname) {
       case '/favicon.svg':
         return new Response(FAVICON_SVG, { headers: { 'Content-Type': 'image/svg+xml', 'Cache-Control': CACHE } });
@@ -1879,7 +3328,7 @@ export default {
       case '/og.png':
         return new Response(bytes(PNG_OG), { headers: { 'Content-Type': 'image/png', 'Cache-Control': CACHE } });
     }
-    return new Response(HTML.split('__ORIGIN__').join(url.origin), {
+    return new Response(HTML.split('__ORIGIN__').join(url.origin).split('__VERSION__').join(APP_VERSION), {
       headers: {
         'Content-Type': 'text/html;charset=UTF-8',
         'Cache-Control': 'no-cache'
