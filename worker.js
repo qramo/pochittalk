@@ -233,6 +233,13 @@ const HTML = `<!DOCTYPE html>
       font-weight: 800; letter-spacing: 1px; cursor: pointer; outline: none; touch-action: manipulation;
       transition: all .15s ease;
     }
+    .seg { display: flex; gap: 6px; }
+    .seg-btn { flex: 1; padding: 8px 0; border-radius: 8px; border: 1px solid #374151; background: #1f2937; color: var(--muted-color); font-weight: 700; cursor: pointer; }
+    .seg-btn.on { background: #1d4ed8; border-color: #3b82f6; color: #fff; }
+    .ptt-wrap.pos-left { justify-content: flex-start; }
+    .ptt-wrap.pos-right { justify-content: flex-end; }
+    .ptt-wrap.pos-left .vox-btn { left: 173px; right: auto; }
+    .ptt-wrap.pos-right .vox-btn { left: auto; right: 173px; }
     .ptt-wrap.lefty .vox-btn { left: auto; right: max(0px, calc(50% - 150px)); }
     .vox-btn-main { font-size: 0.85rem; line-height: 1; }
     .vox-btn-state { font-size: 0.62rem; line-height: 1; opacity: .85; }
@@ -242,6 +249,32 @@ const HTML = `<!DOCTYPE html>
       color: #052e1c; border-color: #065f46;
       box-shadow: 0 0 14px rgba(16, 185, 129, 0.65);
     }
+    .invite-card { background: linear-gradient(180deg, #2a3243 0%, #232a36 100%); border: 2px solid #fbbf24; border-radius: 20px; padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 8px; box-shadow: 0 0 16px rgba(251,191,36,0.25); }
+    .invite-title { color: #fbbf24; font-weight: 800; letter-spacing: 1px; font-size: 0.9rem; }
+    .invite-hash { font-family: "Courier New", monospace; font-weight: 900; font-size: 2rem; color: #38bdf8; letter-spacing: 2px; text-shadow: 0 0 12px rgba(56,189,248,0.45); }
+    .invite-info { font-size: 0.82rem; color: var(--muted-color); text-align: center; overflow-wrap: anywhere; min-height: 1.2em; }
+    button.btn-sub.invite-join { width: 100%; background: #2563eb; padding: 12px 0; font-size: 1rem; }
+    button.btn-sub.invite-join:hover { background: #1d4ed8; }
+    .invite-links { display: flex; gap: 18px; }
+    .linklike { background: none; border: none; color: #93c5fd; text-decoration: underline; font-size: 0.78rem; cursor: pointer; padding: 2px 4px; }
+    .chan-chip.invited { border-color: #fbbf24; box-shadow: 0 0 8px rgba(251,191,36,0.35); }
+    .tune-actions #qrBtn { flex: none; width: 64px; padding: 6px 0; line-height: 1; display: flex; align-items: center; justify-content: center; }
+    .back-face {
+      display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 4px 0 8px;
+      background: linear-gradient(180deg, #232a36 0%, #1b212b 100%); border-radius: 18px; position: relative;
+    }
+    .back-face::before, .back-face::after {
+      content: ''; position: absolute; top: 10px; width: 9px; height: 9px; border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #9ca3af, #4b5563 70%); box-shadow: 0 0 0 1px #111827;
+    }
+    .back-face::before { left: 6px; } .back-face::after { right: 6px; }
+    .back-head { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 0 22px 8px; border-bottom: 2px solid #374151; color: #93c5fd; }
+    .qr-sticker { background: #fff; border-radius: 14px; padding: 14px; width: 250px; max-width: 100%; box-shadow: 0 6px 16px rgba(0,0,0,0.45); transform: rotate(-1deg); }
+    .qr-box { color: #374151; font-size: 0.8rem; text-align: center; min-height: 100px; display: flex; align-items: center; justify-content: center; }
+    .qr-box svg { width: 100%; height: auto; display: block; }
+    .back-room { font-family: "Courier New", monospace; font-weight: 800; font-size: 1.4rem; color: #38bdf8; letter-spacing: 2px; }
+    .back-note { font-size: 0.8rem; color: var(--muted-color); text-align: center; }
+    .back-url { font-size: 0.65rem; color: var(--muted-color); opacity: .75; word-break: break-all; text-align: center; padding: 0 20px; user-select: text; -webkit-user-select: text; }
     .tag-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.82rem; color: var(--muted-color); }
     .tag-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tag-row .btn-sub { flex: none; white-space: nowrap; }
@@ -316,6 +349,16 @@ const HTML = `<!DOCTYPE html>
 </head>
 <body>
   <div class="home" id="homeView">
+    <section class="invite-card hidden" id="inviteCard">
+      <div class="invite-title">招待された部屋</div>
+      <div class="invite-hash" id="inviteHash">----·----</div>
+      <div class="invite-info" id="inviteInfo"></div>
+      <button class="btn-sub invite-join" id="inviteJoin" type="button">この部屋に入る</button>
+      <div class="invite-links">
+        <button class="linklike" id="inviteLater" type="button">あとで</button>
+        <button class="linklike" id="inviteAbout" type="button">使い方・プライバシー</button>
+      </div>
+    </section>
     <section class="room-panel">
       <div class="brand"><span>🔘</span><span>ぽちっと通話</span><span class="alpha-badge">α版</span></div>
       <input type="text" id="nameInput" placeholder="ハンドルネーム" maxlength="12" autocomplete="off">
@@ -330,6 +373,7 @@ const HTML = `<!DOCTYPE html>
   </div>
 
   <main class="walkie-talkie hidden" id="radioView">
+    <div id="frontFace">
     <header class="header">
       <div class="brand"><span>🔘</span><span>ぽちっと通話</span><span class="alpha-badge">α版</span></div>
       <div style="display:flex;gap:6px;align-items:center">
@@ -382,6 +426,7 @@ const HTML = `<!DOCTYPE html>
     <footer class="config-panel">
       <div class="tune-actions">
         <button class="btn-sub" id="shareBtn" type="button">招待URLをコピー</button>
+        <button class="btn-sub" id="qrBtn" type="button" title="QRコードで招待" aria-label="QRコードで招待"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM19 14h2v2h-2zM14 19h2v2h-2zM18 18h3v3h-3z" fill="currentColor" stroke="none"/></svg></button>
         <button class="btn-sub" id="speakerBtn" type="button" title="スピーカーのミュート切り替え" aria-label="スピーカーのミュート切り替え">🔈</button>
       </div>
       <div class="vox-panel hidden" id="voxPanel">
@@ -389,6 +434,17 @@ const HTML = `<!DOCTYPE html>
         <label class="vox-sens"><span>しきい値</span><input type="range" id="voxSens" min="1" max="10" step="1" value="6"></label>
       </div>
     </footer>
+    </div>
+    <div class="back-face hidden" id="backFace">
+      <div class="back-head">
+        <strong>招待 QR</strong>
+        <button class="btn-sub" id="qrBack" type="button" style="padding:4px 12px">もどる</button>
+      </div>
+      <div class="qr-sticker"><div class="qr-box" id="qrBox">読み込み中…</div></div>
+      <div class="back-room" id="qrRoom">----·----</div>
+      <p class="back-note">このコードを読み取ると、同じ部屋に入れます。</p>
+      <div class="back-url" id="qrUrl"></div>
+    </div>
   </main>
 
   <section class="room-panel" style="margin-top:16px">
@@ -411,7 +467,14 @@ const HTML = `<!DOCTYPE html>
         <div class="level-row"><span class="level-label">MIC</span><canvas class="level" id="homeLevelCanvas" width="280" height="14"></canvas><span class="level-db" id="homeLevelDb">-∞ dB</span></div>
         <button class="btn-sub" id="micTestBtn" type="button" style="width:100%;margin-top:10px">マイクテスト開始</button>
         <h3>操作</h3>
-        <label class="sound-toggle"><input type="checkbox" id="leftyCheck"> 左手用（VOX ボタンを話すボタンの右側に置く）</label>
+        <p style="margin:8px 0 6px">話すボタンの位置</p>
+        <div class="seg" id="pttPosSeg">
+          <button type="button" class="seg-btn" data-pos="left">左</button>
+          <button type="button" class="seg-btn on" data-pos="center">中央</button>
+          <button type="button" class="seg-btn" data-pos="right">右</button>
+        </div>
+        <p style="opacity:.8;font-size:0.75rem;margin:6px 0 10px">片手で持つときに、親指が届く側に寄せられます。VOX の丸ボタンは、空いている側に付きます。</p>
+        <label class="sound-toggle"><input type="checkbox" id="leftyCheck"> 左手用（話すボタンが中央のとき、VOX ボタンを右側に置く）</label>
         <h3>効果音</h3>
         <label class="vox-sens" style="margin:10px 0"><span>音量</span><input type="range" id="sfxVol" min="0" max="150" step="5" value="100"><span class="gain-val" id="sfxVolVal">100%</span></label>
         <p style="opacity:.8;font-size:0.75rem">スライダーを離すと、試しに「ガッ」と鳴ります。効果音を消したいときは、音量を 0% にしてください。</p>
@@ -465,8 +528,9 @@ const HTML = `<!DOCTYPE html>
         <li>入室後は、大きなボタンを押している間だけ話せます（PCではスペースキーも使えます）。</li>
         <li>「招待URLをコピー」で友達にURLを送ると、同じ部屋に入れます。</li>
         <li>誰かが話している間は話せません（話中）。同時に押すと混線して、どちらも送信が切れます。</li>
+        <li>部屋の中のQRボタンを押すと、無線機が裏返って、招待URLのQRコードが出ます。友達がスマホで読み取ると、同じ部屋に入れます。「もどる」で表に戻ります。</li>
         <li>部屋の中では、「話題タグ」をつけられます（30文字まで）。誰でも変えられ、付けた人の名前が添えられます。部屋の一覧にも表示されます。</li>
-        <li>相手が見つからない、声が届かなくなったときは、「再接続」を押すと、部屋に入ったまま接続をやり直します。回線が戻ったときや、しばらく画面を離れて戻ったときは、自動でやり直します。</li>
+        <li>相手が見つからない、声が届かなくなったときは、「再接続」を押すと、部屋に入ったまま接続をやり直します。回線が戻ったときや、画面を離れて（バックグラウンドに回って）戻ったときは、自動でやり直します。iPhone は、画面を消したりほかのアプリに切り替えたりすると通話が止まるので、アプリに戻ってください。</li>
         <li>人数の目安は1部屋あたり6〜8人までです。</li>
       </ul>
 
@@ -493,6 +557,7 @@ const HTML = `<!DOCTYPE html>
         <li><b>ハンドルネーム</b>: ブラウザの localStorage（キー名 pochitalk_ptt_name）に保存されます。次回開いたときに入力済みになります。この端末のブラウザの中だけにあり、運営側には送られません。ブラウザのサイトデータを消すと削除されます。</li>
         <li><b>URLの「?r=…」</b>: 今いる部屋のハッシュ値がアドレスに入ります。ブラウザの履歴に残ることがあります。</li>
         <li><b>初回案内の表示設定</b>: 初回の案内で「次回も表示する」をオフにしたときだけ、その旨を localStorage（キー名 pochitalk_welcome）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
+        <li><b>話すボタンの位置</b>: 左または右にしたときだけ、その旨を localStorage（キー名 pochitalk_ptt_pos）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
         <li><b>左手用の設定</b>: ONにしたときだけ、その旨を localStorage（キー名 pochitalk_lefty）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
         <li><b>効果音の音量</b>: 0〜150%の数字を、同じく localStorage（キー名 pochitalk_sfx_vol）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
         <li><b>入力レベル</b>: マイクの増幅（0〜30dB）の数字を、同じく localStorage（キー名 pochitalk_input_db）に保存します。この端末のブラウザの中だけにあり、運営側には送られません。</li>
@@ -509,7 +574,7 @@ const HTML = `<!DOCTYPE html>
 
       <h4>外部のサービスについて</h4>
       <ul>
-        <li><b>esm.sh</b>: 通話用のライブラリ（Trystero）の配信元です。ページを開くと、ここにもアクセスが発生します。</li>
+        <li><b>esm.sh</b>: 通話用のライブラリ（Trystero）の配信元です。ページを開くと、ここにもアクセスが発生します。QRコードを作るライブラリも、ここから配信されます（QRのボタンを押したときだけ読み込みます。QRは、端末の中で作られ、招待URLは外に送られません）。</li>
         <li><b>Nostr の公開リレー</b>: 通話相手を見つけるための接続情報のやり取りに使います。内容は暗号化されますが、接続元IPなどのアクセス情報はリレーの運営者に見える可能性があります。</li>
         <li><b>STUNサーバー（Cloudflare・Google）</b>: 端末どうしが直接つながるための、公開されたアドレスの確認に使います。IPアドレスがこれらに送られます。</li>
         <li>これらは運営側が管理していない外部のサービスです。</li>
@@ -580,7 +645,7 @@ const HTML = `<!DOCTYPE html>
 
     function getAudioContext() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === 'suspended') audioCtx.resume();
+      if (audioCtx.state !== 'running') audioCtx.resume().catch(function () {}); // iOS は 'interrupted' になることもある
       return audioCtx;
     }
 
@@ -1052,7 +1117,7 @@ const HTML = `<!DOCTYPE html>
     }
     function spaceActive() {
       return !!currentKey && !document.getElementById('radioView').classList.contains('hidden')
-        && !document.querySelector('dialog[open]') && !isTyping();
+        && !document.querySelector('dialog[open]') && !isTyping() && !document.getElementById('radioView').classList.contains('flipped');
     }
 
     window.addEventListener('keydown', function (e) {
@@ -1086,7 +1151,7 @@ const HTML = `<!DOCTYPE html>
       document.getElementById('homeView').classList.toggle('hidden', !!key);
       document.getElementById('radioView').classList.toggle('hidden', !key);
       if (!key) document.getElementById('stickyBar').classList.add('hidden');
-      if (!key) return;
+      if (!key) { resetFlip(); return; }
       roomDisplay.textContent = fmt(key);
       chDisplay.textContent = 'ROOM HASH';
       freqDisplay.textContent = fmt(key);
@@ -1124,6 +1189,7 @@ const HTML = `<!DOCTYPE html>
       if (key === currentKey) { renderFreq(key); flashSub('すでにこの周波数です'); return; }
       currentKey = key;
       pendingKey = null;
+      resetFlip();
       try { history.replaceState(null, '', '?r=' + key); } catch (_) {}
       freqDisplay.classList.add('tuning');
       let i = 0;
@@ -1261,6 +1327,27 @@ const HTML = `<!DOCTYPE html>
       return st.names.some(function (n) { return n.toLowerCase().indexOf(f.text) >= 0; });
     }
 
+    // ---------- 招待URLで開いたとき: 画面の先頭に、その部屋を大きく出す ----------
+    const inviteCard = document.getElementById('inviteCard');
+    function renderInvite(st) {
+      if (!pendingKey || currentKey) { inviteCard.classList.add('hidden'); return; }
+      inviteCard.classList.remove('hidden');
+      document.getElementById('inviteHash').textContent = fmt(pendingKey);
+      const info = document.getElementById('inviteInfo');
+      if (st && st.count > 0) {
+        info.textContent = '👤 ' + st.count + '人：' + st.names.join('、') + (st.tag ? '　🏷 ' + st.tag : '');
+      } else {
+        info.textContent = 'いまは誰もいません。入って待つこともできます。';
+      }
+    }
+    document.getElementById('inviteJoin').addEventListener('click', function () { if (pendingKey) tuneKey(pendingKey); });
+    document.getElementById('inviteLater').addEventListener('click', function () {
+      pendingKey = null;
+      try { history.replaceState(null, '', location.pathname); } catch (_) {}
+      renderScan();
+    });
+    document.getElementById('inviteAbout').addEventListener('click', function () { openDialog(aboutDialog); });
+
     function renderScan() {
       const stats = roomStats();
       if (pendingKey && !stats.has(pendingKey)) stats.set(pendingKey, { count: 0, air: false, names: [], invited: true });
@@ -1268,7 +1355,10 @@ const HTML = `<!DOCTYPE html>
       // URLやハッシュで指定された部屋に、いま誰もいない場合も、入れるように出す
       if (f && f.exact && !stats.has(f.exact)) stats.set(f.exact, { count: 0, air: false, names: [], empty: true });
       const allKeys = Array.from(stats.keys()).sort();
-      const keys = f ? allKeys.filter(function (k) { return matchSearch(k, stats.get(k), f); }) : allKeys;
+      let keys = f ? allKeys.filter(function (k) { return matchSearch(k, stats.get(k), f); }) : allKeys;
+      // 招待された部屋は、一覧の先頭に出す
+      if (pendingKey && keys.indexOf(pendingKey) >= 0) keys = [pendingKey].concat(keys.filter(function (k) { return k !== pendingKey; }));
+      renderInvite(pendingKey ? stats.get(pendingKey) : null);
       let total = 0;
       stats.forEach(function (v) { total += v.count; });
       onlineCount.textContent = f
@@ -1286,7 +1376,7 @@ const HTML = `<!DOCTYPE html>
         const st = stats.get(key);
         const b = document.createElement('button');
         b.type = 'button';
-        b.className = 'chan-chip' + (key === currentKey ? ' me' : '') + (st.air ? ' air' : '');
+        b.className = 'chan-chip' + (key === currentKey ? ' me' : '') + (st.air ? ' air' : '') + (key === pendingKey ? ' invited' : '');
         const head = document.createElement('div');
         head.textContent = (st.air ? '🔴 ' : '🔵 ') + fmt(key) + ' · 👤' + st.count + (key === pendingKey ? ' · 招待' : '');
         const tg = document.createElement('div');
@@ -1339,13 +1429,114 @@ const HTML = `<!DOCTYPE html>
       }
     }
     document.getElementById('reconnectBtn').addEventListener('click', function () { reconnectRoom(false); });
-    // 回線が戻ったとき、または長くバックグラウンドにいたあとに戻ったときは、自動でつなぎ直す
+    // 回線が戻ったときは、自動でつなぎ直す
     window.addEventListener('online', function () { reconnectRoom(true); });
+    // ---------- QRコード（裏返して、裏面に招待QRを見せる）----------
+    const radioEl = document.getElementById('radioView'), frontFace = document.getElementById('frontFace'), backFace = document.getElementById('backFace');
+    let flipping = false;
+    const wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+
+    async function renderQr() {
+      const url = location.origin + location.pathname + '?r=' + currentKey;
+      document.getElementById('qrRoom').textContent = fmt(currentKey);
+      document.getElementById('qrUrl').textContent = url;
+      const box = document.getElementById('qrBox');
+      box.textContent = '読み込み中…';
+      try {
+        const mod = await import('https://esm.sh/qrcode-generator@1.4.4'); // QRボタンを押したときだけ読み込む
+        const qrcode = mod.default || mod;
+        const qr = qrcode(0, 'M');
+        qr.addData(url);
+        qr.make();
+        box.innerHTML = qr.createSvgTag({ cellSize: 6, margin: 0, scalable: true });
+      } catch (_) {
+        box.textContent = 'QRコードを読み込めませんでした。招待URLのコピーをお使いください。';
+      }
+    }
+
+    async function flipTo(showBack) {
+      if (flipping || !currentKey) return;
+      if (showBack === radioEl.classList.contains('flipped')) return;
+      flipping = true;
+      try {
+        if (showBack) { await renderQr(); backFace.style.minHeight = frontFace.offsetHeight + 'px'; }
+        const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const swap = function () {
+          frontFace.classList.toggle('hidden', showBack);
+          backFace.classList.toggle('hidden', !showBack);
+          radioEl.classList.toggle('flipped', showBack);
+        };
+        if (still) { swap(); return; }
+        radioEl.style.transition = 'transform .2s ease-in';
+        radioEl.style.transform = 'perspective(900px) rotateY(90deg)';
+        await wait(200);
+        swap();
+        radioEl.style.transition = 'none';
+        radioEl.style.transform = 'perspective(900px) rotateY(-90deg)';
+        void radioEl.offsetWidth;
+        radioEl.style.transition = 'transform .22s ease-out';
+        radioEl.style.transform = 'perspective(900px) rotateY(0deg)';
+        await wait(230);
+        radioEl.style.transition = ''; radioEl.style.transform = '';
+      } finally { flipping = false; }
+    }
+
+    // 部屋を出る・移るときは、アニメーションなしで表に戻す
+    function resetFlip() {
+      radioEl.classList.remove('flipped');
+      frontFace.classList.remove('hidden');
+      backFace.classList.add('hidden');
+      radioEl.style.transition = ''; radioEl.style.transform = '';
+    }
+    document.getElementById('qrBtn').addEventListener('click', function () { document.getElementById('qrBtn').blur(); flipTo(true); });
+    document.getElementById('qrBack').addEventListener('click', function () { flipTo(false); });
+    window.addEventListener('keydown', function (e) { if (e.key === 'Escape' && radioEl.classList.contains('flipped')) flipTo(false); });
+
+    // ---------- バックグラウンド / フォアグラウンド ----------
+    // iPhone などは、バックグラウンドに回るとページの処理とマイクが止まり、接続が切れる。
+    // 戻ってきたときに、必要なら自動でつなぎ直し、マイクも取り直す。
+    const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    let leftAt = 0; // バックグラウンドに回った時刻
+
+    function goneBackground() { if (!leftAt) leftAt = Date.now(); }
+
+    function peersUnhealthy() {
+      try {
+        const pcs = room ? room.getPeers() : {};
+        return Object.keys(pcs).some(function (id) {
+          const st = pcs[id] && pcs[id].connectionState;
+          return st === 'failed' || st === 'disconnected' || st === 'closed';
+        });
+      } catch (_) { return false; }
+    }
+
+    function backToForeground() {
+      const away = leftAt ? Date.now() - leftAt : 0;
+      leftAt = 0;
+      if (!currentKey) return;
+      try { getAudioContext(); } catch (_) {}
+      const micDead = !!userMediaStream && userMediaStream.getAudioTracks().every(function (t) { return t.readyState === 'ended'; });
+      // iPhone は少し離れただけでも切れやすいので、短い時間でもつなぎ直す。ほかの端末は、切れているか、長く離れたときだけ
+      const need = micDead || peersUnhealthy() || away > (isIOS ? 3000 : 20000);
+      if (!need) return;
+      const voxWasOn = voxCheck.checked;
+      if (micDead) { if (voxWasOn) { setVoxUI(false); stopVox(); } releaseMic(); } // 止まったマイクは捨てて、取り直す
+      reconnectRoom(true).then(function () {
+        if (userMediaStream) return;
+        initMicrophone(true).then(function (ok) {
+          if (ok && voxWasOn) { setVoxUI(true); startVox(); }
+          else if (!ok) flashSub('マイクが止まりました。話すボタンを押して、もう一度許可してください');
+        });
+      });
+    }
+
     document.addEventListener('visibilitychange', function () {
-      if (document.hidden) { hiddenAt = Date.now(); return; }
-      if (hiddenAt && Date.now() - hiddenAt > 20000) reconnectRoom(true);
-      hiddenAt = 0;
+      if (document.hidden) goneBackground(); else backToForeground();
     });
+    window.addEventListener('pagehide', goneBackground);
+    window.addEventListener('pageshow', function (e) { if (e.persisted) backToForeground(); });
+    document.addEventListener('freeze', goneBackground);
+    document.addEventListener('resume', backToForeground);
 
     document.getElementById('emptyBtn').addEventListener('click', function () {
       const key = toHex(crypto.getRandomValues(new Uint8Array(4)));
@@ -1472,7 +1663,7 @@ const HTML = `<!DOCTYPE html>
     });
 
     // ---------- 音声レベル（部屋の中・ホームのマイクテスト共通）----------
-    function makeMeter(canvas, dbEl, labelEl) {
+    function makeMeter(canvas, dbEl, labelEl, dimIdle) {
       const lv = canvas.getContext('2d');
       const W = canvas.width, H = canvas.height, SEGS = 24;
       let level = 0, peak = 0, peakHoldUntil = 0, td = null;
@@ -1497,7 +1688,9 @@ const HTML = `<!DOCTYPE html>
           const pos = (i + 1) / SEGS;
           const on = pos <= level + 0.001;
           const isPeak = Math.abs(pos - peak) < 0.5 / SEGS + 0.001 && peak > 0.02;
-          lv.globalAlpha = (on || isPeak) ? 1 : 0.16;
+          // 話してもいない・受信してもいない（マイクの待機表示）ときは、点灯を薄くして差をつける
+          const lit = (dimIdle && src && src.idle) ? 0.38 : 1;
+          lv.globalAlpha = (on || isPeak) ? lit : 0.16;
           lv.fillStyle = pos > 0.85 ? '#ef4444' : pos > 0.65 ? '#fbbf24' : '#10b981';
           lv.fillRect(i * (sw + sg), 0, sw, H);
         }
@@ -1508,7 +1701,7 @@ const HTML = `<!DOCTYPE html>
     }
 
     (function () {
-      const roomMeter = makeMeter(document.getElementById('levelCanvas'), document.getElementById('levelDb'), document.getElementById('levelLabel'));
+      const roomMeter = makeMeter(document.getElementById('levelCanvas'), document.getElementById('levelDb'), document.getElementById('levelLabel'), true);
       const homeMeter = makeMeter(document.getElementById('homeLevelCanvas'), document.getElementById('homeLevelDb'), null);
       const radioView = document.getElementById('radioView');
       const homeView = document.getElementById('homeView');
@@ -1557,6 +1750,22 @@ const HTML = `<!DOCTYPE html>
       flashSub(speakerMuted ? 'スピーカーをミュートしました' : 'スピーカーのミュートを解除しました');
     });
 
+    // ---------- 話すボタンの位置（左 / 中央 / 右）----------
+    // 中央のときだけ、左手用で VOX ボタンの側を切り替える。左寄せ→VOX は右側、右寄せ→VOX は左側
+    const pttPosSeg = document.getElementById('pttPosSeg');
+    function setPttPos(pos, save) {
+      if (pos !== 'left' && pos !== 'right') pos = 'center';
+      document.querySelector('.ptt-wrap').classList.toggle('pos-left', pos === 'left');
+      document.querySelector('.ptt-wrap').classList.toggle('pos-right', pos === 'right');
+      pttPosSeg.querySelectorAll('.seg-btn').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-pos') === pos); });
+      if (save) { try { if (pos === 'center') localStorage.removeItem('pochitalk_ptt_pos'); else localStorage.setItem('pochitalk_ptt_pos', pos); } catch (_) {} }
+    }
+    pttPosSeg.addEventListener('click', function (e) {
+      const b = e.target.closest('.seg-btn');
+      if (b) setPttPos(b.getAttribute('data-pos'), true);
+    });
+    try { setPttPos(localStorage.getItem('pochitalk_ptt_pos'), false); } catch (_) { setPttPos('center', false); }
+
     // ---------- 左手用（VOX ボタンの位置）----------
     const leftyCheck = document.getElementById('leftyCheck'), pttWrap = document.querySelector('.ptt-wrap');
     function setLefty(on, save) {
@@ -1599,11 +1808,12 @@ const HTML = `<!DOCTYPE html>
     (function () {
       const bar = document.getElementById('stickyBar');
       const lcd = document.querySelector('.lcd');
+      const radioView2 = document.getElementById('radioView');
       if (!('IntersectionObserver' in window)) return;
       new IntersectionObserver(function (entries) {
         const visible = entries[0].isIntersecting;
         const inRoom = !document.getElementById('radioView').classList.contains('hidden');
-        bar.classList.toggle('hidden', visible || !inRoom);
+        bar.classList.toggle('hidden', visible || !inRoom || radioView2.classList.contains('flipped'));
       }).observe(lcd);
     })();
 
@@ -1627,7 +1837,8 @@ const HTML = `<!DOCTYPE html>
       renderScan();
     });
 
-    if (getWelcomeOn()) openDialog(welcomeDialog);
+    // 招待URLで開いたときは、招待の画面を優先して、初回案内は出さない（設定からいつでも見られる）
+    if (getWelcomeOn() && !isKey((urlParams.get('r') || '').trim().toLowerCase())) openDialog(welcomeDialog);
 
     (async function init() {
       const p = (urlParams.get('r') || '').trim().toLowerCase();
