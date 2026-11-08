@@ -1,0 +1,24 @@
+{
+  "originHash" : "e94e42133ab19a3f4b0f128bb2778b7175559bad6c4b977438fd55479eb22cf7",
+  "pins" : [
+    {
+      "identity" : "swift-secp256k1",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/21-DOT-DEV/swift-secp256k1",
+      "state" : {
+        "revision" : "bcd6dd8e615ce243eab7097f213c8c4b39305a2e",
+        "version" : "0.24.0"
+      }
+    },
+    {
+      "identity" : "webrtc",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/stasel/WebRTC",
+      "state" : {
+        "revision" : "c6cde72c7638acf8dc2b070aaecca054e9e20720",
+        "version" : "157.0.0"
+      }
+    }
+  ],
+  "version" : 3
+}
