@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
@@ -37,6 +38,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,7 +74,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.pochitalk.engine.MeterState
 import app.pochitalk.engine.PeerInfo
+import app.pochitalk.engine.FaxPaper
 import app.pochitalk.engine.PochiEngine
+import app.pochitalk.engine.PttPosition
 import app.pochitalk.engine.StatusKind
 import app.pochitalk.engine.UiState
 import app.pochitalk.engine.formatKey
@@ -81,7 +85,7 @@ import kotlin.math.abs
 /**
  * 無線機画面: Web版と同じく、1つの「無線機」カードの中に、ヘッダー / 液晶 (ROOM HASH・レベル・話題タグ・状態・参加者) /
  * 話すボタン / 招待・再接続・VOX・効果音 を並べる。スクロールして液晶が見えなくなると、上にルームハッシュのバーが出る。
- * 部屋一覧は、左から右へスワイプして開く (PochiRoot のドロワー)。
+ * 部屋一覧は、Web版と同じく、無線機の下に並べる。
  */
 @Composable
 fun RadioScreen(state: UiState, actions: Actions, onOpenRooms: () -> Unit, modifier: Modifier = Modifier) {
@@ -97,6 +101,11 @@ fun RadioScreen(state: UiState, actions: Actions, onOpenRooms: () -> Unit, modif
                 .padding(16.dp),
         ) {
             DeviceCard(state, key, actions, onOpenRooms)
+            Spacer(Modifier.height(16.dp))
+            // Web版と同じく、部屋一覧は無線機の下に並べる
+            PochiCard {
+                RoomListCard(state, actions.join, showReconnect = false)
+            }
             Spacer(Modifier.height(24.dp))
         }
         if (showSticky) {
@@ -120,6 +129,8 @@ fun RadioScreen(state: UiState, actions: Actions, onOpenRooms: () -> Unit, modif
 private fun DeviceCard(state: UiState, key: String, actions: Actions, onOpenRooms: () -> Unit) {
     val shape = RoundedCornerShape(28.dp)
     val meter by PochiEngine.meter.collectAsStateWithLifecycle()
+    // 無線機を裏返して、招待のQRコードを見せる (部屋を移ったら表に戻る)
+    var showQr by rememberSaveable(key) { mutableStateOf(false) }
     Column(
         Modifier
             .fillMaxWidth()
@@ -130,6 +141,10 @@ private fun DeviceCard(state: UiState, key: String, actions: Actions, onOpenRoom
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
+        if (showQr) {
+            QrBackFace(key, onBack = { showQr = false })
+            return@Column
+        }
         // ヘッダー
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -146,11 +161,13 @@ private fun DeviceCard(state: UiState, key: String, actions: Actions, onOpenRoom
             HorizontalDivider(thickness = 2.dp, color = PochiColors.Border)
         }
         DisplayPanel(state, key, meter)
-        PttSection(transmitting = state.ledTx, voxOn = state.voxOn, lefty = state.lefty, onOpenRooms = onOpenRooms)
+        PttSection(transmitting = state.ledTx, voxOn = state.voxOn, lefty = state.lefty, pos = state.pttPos, onOpenRooms = onOpenRooms)
         // フッター
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SubButton(onClick = actions.share, modifier = Modifier.weight(1f)) { Text("招待URLを送る", fontSize = 13.sp) }
+                // QRコードで招待 (無線機を裏返す)
+                SubButton(onClick = { showQr = true }, modifier = Modifier.width(64.dp)) { QrIcon() }
                 // スピーカーのミュート (相手の声と効果音を止める。マイクは止めない)
                 SubButton(
                     onClick = { PochiEngine.toggleSpeakerMute() },
@@ -186,10 +203,21 @@ private fun DisplayPanel(state: UiState, key: String, meter: MeterState) {
                 fontWeight = FontWeight.Black,
                 fontSize = 38.sp,
             )
-            Text(state.flash ?: "", color = PochiColors.Muted, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.height(18.dp))
+            val sub = state.flash ?: state.morseText
+            val isMorse = state.flash == null && state.morseText.isNotEmpty()
+            Text(
+                sub,
+                color = if (isMorse) PochiColors.Amber else PochiColors.Muted,
+                fontFamily = if (isMorse) FontFamily.Monospace else FontFamily.Default,
+                fontSize = if (isMorse) 14.sp else 12.sp,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                modifier = Modifier.height(18.dp),
+            )
             LevelMeter(meter)
         }
-        TagRow(state)
+        state.fax?.let { FaxPaperView(it) }
+        TagRow(state, key)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -225,7 +253,7 @@ private fun DisplayPanel(state: UiState, key: String, meter: MeterState) {
                 .padding(top = 10.dp),
         ) {
             FlowRow(
-                modifier = Modifier.heightIn(max = 110.dp).verticalScroll(rememberScrollState()),
+                modifier = Modifier.heightIn(max = 110.dp).verticalScroll(rememberScrollState()).padding(bottom = if (state.presentCount > 0) 16.dp else 0.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
@@ -258,18 +286,37 @@ private fun DisplayPanel(state: UiState, key: String, meter: MeterState) {
                     Text("（ほかの参加者を待っています）", color = PochiColors.Muted, fontSize = 13.sp, modifier = Modifier.alpha(0.6f).padding(vertical = 2.dp))
                 }
             }
+            if (state.presentCount > 0) {
+                val ok = state.connectedCount >= state.presentCount
+                Text(
+                    "接続 ${state.connectedCount} / 在室 ${state.presentCount}",
+                    color = if (ok) PochiColors.Rx else PochiColors.Amber,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.align(Alignment.BottomEnd),
+                )
+            }
         }
     }
 }
 
 /** 話題タグの行 (Web版の .tag-row): 誰でもつけられ、付けた人の名前が添えられる。部屋の一覧にも出る。 */
 @Composable
-private fun TagRow(state: UiState) {
+private fun TagRow(state: UiState, key: String) {
     var editing by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf(TextFieldValue("")) }
     fun commit() {
         PochiEngine.setTag(draft.text)
         editing = false
+    }
+    // おうむ返しボットの部屋は、タグが固定で、書き換えられない (Web版と同じ)
+    if (key == BOT_ROOM_KEY) {
+        Text(
+            "🏷 🦜 おうむ返しの部屋（話すと、あなたにだけ声が返ります）",
+            color = PochiColors.Muted, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        return
     }
     Column {
         // タグの行: 「🏷 タグ（○○が付けた）」と、右に「つける/変える」 (Web版の .tag-row)
@@ -325,10 +372,23 @@ private fun TagRow(state: UiState) {
 }
 
 @Composable
-private fun PttSection(transmitting: Boolean, voxOn: Boolean, lefty: Boolean, onOpenRooms: () -> Unit) {
+private fun PttSection(transmitting: Boolean, voxOn: Boolean, lefty: Boolean, pos: PttPosition, onOpenRooms: () -> Unit) {
     // VOX の丸ボタンは、話すボタンの左下に置く (左手用は右下)。下に少しはみ出すので、余白を取る
     BoxWithConstraints(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
-        val sidePad = (maxWidth / 2 - 150.dp).coerceAtLeast(0.dp)
+        // 話すボタンの位置 (左 / 中央 / 右)。VOX の丸ボタンは、話すボタンの空いている側に付く:
+        //   左寄せ→右側、右寄せ→左側、中央→左側 (左手用ならば右側)
+        val circle = 170.dp
+        val circleLeft = when (pos) {
+            PttPosition.LEFT -> 0.dp
+            PttPosition.CENTER -> (maxWidth - circle) / 2
+            PttPosition.RIGHT -> maxWidth - circle
+        }
+        val voxOnLeft = when (pos) {
+            PttPosition.LEFT -> false
+            PttPosition.RIGHT -> true
+            PttPosition.CENTER -> !lefty
+        }
+        val voxLeft = if (voxOnLeft) (circleLeft - 65.dp).coerceAtLeast(0.dp) else (circleLeft + circle + 3.dp).coerceAtMost(maxWidth - 62.dp)
         val brush = if (transmitting) {
             Brush.radialGradient(listOf(Color(0xFFEF4444), Color(0xFFB91C1C)))
         } else {
@@ -336,7 +396,8 @@ private fun PttSection(transmitting: Boolean, voxOn: Boolean, lefty: Boolean, on
         }
         Box(
             Modifier
-                .align(Alignment.TopCenter)
+                .align(Alignment.TopStart)
+                .offset(x = circleLeft)
                 .size(170.dp)
                 .scale(if (transmitting) 0.96f else 1f)
                 .clip(CircleShape)
@@ -401,9 +462,8 @@ private fun PttSection(transmitting: Boolean, voxOn: Boolean, lefty: Boolean, on
         VoxButton(
             on = voxOn,
             modifier = Modifier
-                .align(if (lefty) Alignment.BottomEnd else Alignment.BottomStart)
-                .padding(start = if (lefty) 0.dp else sidePad, end = if (lefty) sidePad else 0.dp)
-                .offset(y = 14.dp),
+                .align(Alignment.BottomStart)
+                .offset(x = voxLeft, y = 14.dp),
         )
     }
 }
@@ -473,5 +533,35 @@ private fun VoxSection(state: UiState) {
             color = PochiColors.Muted,
             fontSize = 11.sp,
         )
+    }
+}
+
+
+/** 受信した FAX の紙 (Web版の faxCanvas): 白い紙に、上から 1 行ずつ黒い画素が出てくる。タップで片づける。 */
+@Composable
+fun FaxPaperView(paper: FaxPaper) {
+    Column(
+        Modifier.fillMaxWidth().clickable { PochiEngine.dismissFax() },
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            "FAX" + if (paper.from.isNotEmpty()) "  ${paper.from} より" else "",
+            color = PochiColors.Muted, fontFamily = FontFamily.Monospace, fontSize = 11.sp, letterSpacing = 2.sp,
+        )
+        Canvas(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(paper.cols / 15f)
+                .clip(RoundedCornerShape(4.dp))
+                .background(Color(0xFFF8F8F0)),
+        ) {
+            val cell = size.width / paper.cols
+            val rows = minOf(paper.shownRows, 15)
+            for (y in 0 until rows) for (x in 0 until paper.cols) {
+                if (paper.black[y * paper.cols + x]) {
+                    drawRect(Color(0xFF141414), Offset(x * cell, y * cell), Size(cell + 0.5f, cell + 0.5f))
+                }
+            }
+        }
     }
 }

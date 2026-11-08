@@ -129,7 +129,7 @@ fun RoomListCard(state: UiState, onJoin: (String) -> Unit, showReconnect: Boolea
     val shown = if (filter == null) all else all.filter { matchSearch(it, filter) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("いまある部屋（タップで入る）", color = PochiColors.Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
+            Text("いまある部屋（赤い線でタップ）", color = PochiColors.Muted, fontSize = 12.sp, modifier = Modifier.weight(1f))
             Text(
                 if (filter != null) "🔍 ${shown.size} / ${all.size}部屋" else "👥 ${state.totalPeople}人 / ${all.size}部屋",
                 color = PochiColors.Muted,
@@ -152,16 +152,21 @@ fun RoomListCard(state: UiState, onJoin: (String) -> Unit, showReconnect: Boolea
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(if (state.reconnecting) "再接続中…" else "↻ 一覧を再接続") }
         }
-        if (all.isEmpty()) {
-            Text(
-                if (state.ready) "いま誰もいません。「新しい部屋を作る」で始めましょう" else "接続中...",
-                color = PochiColors.Muted,
-                fontSize = 13.sp,
-            )
-        } else if (shown.isEmpty()) {
-            Text("該当する部屋がありません", color = PochiColors.Muted, fontSize = 13.sp)
-        }
-        shown.forEach { room -> RoomRow(room, onJoin) }
+        // 先頭: ボットの部屋、招待された部屋 (Web版と同じ並び)
+        var ordered = shown
+        ordered = listOfNotNull(ordered.firstOrNull { it.key == BOT_ROOM_KEY }) + ordered.filter { it.key != BOT_ROOM_KEY }
+        state.pendingKey?.let { pk -> ordered = listOfNotNull(ordered.firstOrNull { it.key == pk }) + ordered.filter { it.key != pk } }
+        RoomDial(
+            rooms = ordered,
+            connected = state.peers.size + 1,
+            pendingKey = state.pendingKey,
+            emptyText = when {
+                filter != null -> "該当する部屋がありません"
+                state.ready -> "いまある部屋はありません。新しい部屋を作ってください"
+                else -> "スキャン中..."
+            },
+            onJoin = onJoin,
+        )
     }
 }
 
@@ -250,12 +255,9 @@ fun InputLevelSetting(state: UiState) {
 @Composable
 fun LevelMeter(meter: MeterState) {
     val segs = 24
-    val labelColor = when (meter.label) {
-        "TX" -> PochiColors.Tx
-        "RX" -> PochiColors.Rx
-        "MIC" -> PochiColors.Accent
-        else -> PochiColors.Muted
-    }
+    // Web版と同じ: ラベルはいつも控えめな灰色。マイクの待機表示 (MIC) のときは、点灯を薄くして差をつける
+    val labelColor = PochiColors.Muted
+    val lit = if (meter.label == "MIC") 0.38f else 1f
     Row(
         Modifier
             .fillMaxWidth()
@@ -287,7 +289,7 @@ fun LevelMeter(meter: MeterState) {
                     else -> PochiColors.Rx
                 }
                 drawRect(
-                    color = col.copy(alpha = if (on || isPeak) 1f else 0.16f),
+                    color = col.copy(alpha = if (on || isPeak) lit else 0.16f),
                     topLeft = Offset(i * (w + gap), 0f),
                     size = Size(w, size.height),
                 )

@@ -106,7 +106,7 @@ class PttGesture(
     }
 
     companion object {
-        /** 押してから、この時間 (ミリ秒) たつと送信を始める。最初の一言が切れすぎない短さにしてある。 */
-        const val DEFAULT_HOLD_MS = 130L
+        /** 押してから、この時間 (ミリ秒) たつと送信を始める。反応を速くするため短くしてある (録音は動かし続けているので、押した瞬間から音が出せる)。 */
+        const val DEFAULT_HOLD_MS = 50L
     }
 }

@@ -3,12 +3,13 @@ package app.pochitalk.core
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Web版 (Trystero 0.20.0) と通話するための土台になる、署名・暗号・フレーミングの単体テスト。
- * 期待値は、本物の Trystero のコード (crypto.js / room.js) と @noble/curves で生成したもの。
+ * Web版 (Trystero 0.25.4) と通話するための土台になる、署名・暗号・フレーミングの単体テスト。
+ * 期待値は、本物の Trystero 0.25.4 のコード (crypto / action-wire / shared-peer) と @noble/curves で生成したもの。
  */
 class ProtocolTest {
 
@@ -49,23 +50,26 @@ class ProtocolTest {
     }
 
     @Test
-    fun topicHashIsBase36PerByteLikeTrystero() {
-        // Trystero: sha1("Trystero@appId@roomId") を各バイト toString(36) で連結 (JS側で生成した値)
-        assertEquals(
-            "156n19p4vo1r4c6a172g1q2aj653d3y55254f",
-            TrysteroCrypto.sha1Topic("Trystero@pochitalk-walkie-talkie-cf-worker@h-3fa9c1d2"),
-        )
+    fun topicsAndKindsMatchTrystero0254() {
+        val root = TrysteroCrypto.topicPath("Trystero", "pochitalk-v2", "h-7a0b07c1")
+        assertEquals("Trystero@pochitalk-v2@h-7a0b07c1", root)
+        assertEquals("2fj6409019131v2l4a255q441867255a4x1s", TrysteroCrypto.sha1Topic(root))
+        assertEquals("72426o4g76r03e4m44us735g6t1m2t4z4o1n", TrysteroCrypto.sha1Topic(TrysteroCrypto.topicPath(root, "AbCdEfGhIjKlMnOpQrSt")))
+        // イベントの kind は topic ごとに変わる: strToNum(topic, 10000) + 20000
+        assertEquals(22373, NostrProtocol.topicToKind("2fj6409019131v2l4a255q441867255a4x1s"))
+        assertEquals(22069, NostrProtocol.topicToKind(NostrProtocol.PRESENCE_TOPIC))
+        assertEquals(29334, NostrProtocol.PRESENCE_KIND)
     }
 
     @Test
-    fun decryptsCiphertextMadeByTrysteroJs() {
-        val key = TrysteroCrypto.genKey("", "pochitalk-walkie-talkie-cf-worker", "h-3fa9c1d2")
-        val cipher = "111,153,95,7,75,7,251,88,11,31,80,101,99,16,7,145$" +
-            "vFPt7gedvAd8TR7SBwsciDQT4S7HJeK72VpYPhZrwHdUPWQSM200ykCCd5Wm/9lCdPZnKerMpSOWWmtNisRJh9qvberGNWfYiMxmjLKOAHeu8qkVfgTI"
-        assertEquals(
-            "v=0\r\no=- 123 2 IN IP4 127.0.0.1\r\ns=-\r\na=ice-ufrag:abc\r\n日本語🎙️",
-            TrysteroCrypto.decrypt(key, cipher),
-        )
+    fun roomNamespaceTokenMatchesTrystero0254() {
+        assertEquals("e5e3690babf1797ba99123b0b32a75ab6fa48a4b98470acee62c49b04b9f147f", TrysteroCrypto.deriveRoomNamespace("pochitalk-v2", "h-7a0b07c1"))
+    }
+
+    @Test
+    fun decryptsCiphertextMadeByTrystero0254() {
+        val key = TrysteroCrypto.genKey("", "pochitalk-v2", "h-7a0b07c1")
+        assertEquals("v=0 test sdp", TrysteroCrypto.decrypt(key, "162,123,96,178,53,97,138,97,125,182,218,77,66,89,123,104\$dNATjcwjbQenyKCj0DxMUbsaDF5bmvHhBcQ4UQ=="))
     }
 
     @Test
@@ -75,39 +79,87 @@ class ProtocolTest {
     }
 
     @Test
-    fun framingMatchesTrysteroRoomJs() {
-        // room.js が実際に送ったバイト列 (pttState {isTalking:true} nonce=0 / pttName "たろう" nonce=0)
-        val state = "7074745374617465000000000009ff7b22697354616c6b696e67223a747275657d"
-        val name = "7074744e616d6500000000000001ffe3819fe3828de38186"
-        assertEquals(state, ActionCodec.encodeJson("pttState", JSONObject().put("isTalking", true), 0)[0].toHex())
-        assertEquals(name, ActionCodec.encodeString("pttName", "たろう", 0)[0].toHex())
+    fun framingMatchesTrystero0254ActionWire() {
+        // action-wire.ts が実際に送ったバイト列 (名前32バイト + nonce2バイト + tag + progress + 本文)
+        val stateTrue = "7074745374617465000000000000000000000000000000000000000000000000000009ff7b22697354616c6b696e67223a747275657d"
+        val stateFalse = "7074745374617465000000000000000000000000000000000000000000000000000109ff7b22697354616c6b696e67223a66616c73657d"
+        val name = "7074744e616d6500000000000000000000000000000000000000000000000000000001ffe381bde381a1f09f9982"
+        val ready = "405f687372656164790000000000000000000000000000000000000000000000000001ff"
+        assertEquals(stateTrue, ActionCodec.encodeJson("pttState", JSONObject().put("isTalking", true), 0)[0].toHex())
+        assertEquals(stateFalse, ActionCodec.encodeJson("pttState", JSONObject().put("isTalking", false), 1)[0].toHex())
+        assertEquals(name, ActionCodec.encodeString("pttName", "ぽち🙂", 0)[0].toHex())
+        assertEquals(ready, ActionCodec.encodeString("@_hsready", "", 0)[0].toHex())
 
         val re = ActionCodec.Reassembler()
-        val m = re.feed(state.hexToBytes())
+        val m = re.feed(stateTrue.hexToBytes())
         assertNotNull(m)
         assertEquals("pttState", m!!.type)
         assertTrue(m.isJson)
         assertTrue(m.json().getBoolean("isTalking"))
-        assertEquals("たろう", re.feed(name.hexToBytes())!!.text)
+        assertEquals("ぽち🙂", re.feed(name.hexToBytes())!!.text)
+        assertEquals("@_hsready", ActionCodec.peekType(ready.hexToBytes()))
+        assertEquals("", re.feed(ready.hexToBytes())!!.text)
     }
 
     @Test
-    fun multiChunkRoundTrip() {
+    fun multiChunkMatchesTrystero0254AndRoundTrips() {
         val big = "x".repeat(40_000)
+        val chunks = ActionCodec.encodeString("big", big, 0)
+        // 本物は 16384 + 16384 + 7340 バイト、progress は 85 / 170 / 255、tag は最後だけ 1
+        assertEquals(listOf(16384, 16384, 7340), chunks.map { it.size })
+        assertEquals(listOf(0, 0, 1), chunks.map { it[34].toInt() })
+        assertEquals(listOf(85, 170, 255), chunks.map { it[35].toInt() and 0xff })
         val re = ActionCodec.Reassembler()
         var got: ActionCodec.Message? = null
-        ActionCodec.encodeString("bigtest", big, 7).forEach { got = re.feed(it) ?: got }
+        chunks.forEach { got = re.feed(it) ?: got }
         assertEquals(big, got?.text)
     }
 
     @Test
+    fun nonceIsSixteenBits() {
+        val c = ActionCodec.encodeString("x", "a", 0x1234)[0]
+        assertEquals(0x12, c[32].toInt())
+        assertEquals(0x34, c[33].toInt())
+    }
+
+    @Test
+    fun roomFramesMatchTrystero0254SharedPeer() {
+        val token = "e5e3690babf1797ba99123b0b32a75ab6fa48a4b98470acee62c49b04b9f147f"
+        // 部屋フレーム: [1][長さ2バイト][トークン][本文]、在室フレーム: [2][在室/退室][長さ2バイト][トークン]
+        assertEquals("01004065356533363930626162663137393762613939313233623062333261373561623666613438613462393834373061636565363263343962303462396631343766010203", ActionCodec.wrapRoomFrame(token, byteArrayOf(1, 2, 3)).toHex())
+        assertEquals("0201004065356533363930626162663137393762613939313233623062333261373561623666613438613462393834373061636565363263343962303462396631343766", ActionCodec.wrapPresenceFrame(token, true).toHex())
+        assertEquals("0200004065356533363930626162663137393762613939313233623062333261373561623666613438613462393834373061636565363263343962303462396631343766", ActionCodec.wrapPresenceFrame(token, false).toHex())
+
+        val room = ActionCodec.unwrapFrame("01004065356533363930626162663137393762613939313233623062333261373561623666613438613462393834373061636565363263343962303462396631343766010203".hexToBytes()) as ActionCodec.Frame.Room
+        assertEquals(token, room.roomToken)
+        assertEquals("010203", room.payload.toHex())
+        val pres = ActionCodec.unwrapFrame("0201004065356533363930626162663137393762613939313233623062333261373561623666613438613462393834373061636565363263343962303462396631343766".hexToBytes()) as ActionCodec.Frame.Presence
+        assertTrue(pres.isPresent)
+        assertTrue(!(ActionCodec.unwrapFrame("0200004065356533363930626162663137393762613939313233623062333261373561623666613438613462393834373061636565363263343962303462396631343766".hexToBytes()) as ActionCodec.Frame.Presence).isPresent)
+        assertNull(ActionCodec.unwrapFrame(byteArrayOf(1, 0)))
+    }
+
+    @Test
     fun nostrEventIsSignedAndHashedLikeJsonStringify() {
-        val ev = NostrProtocol.createEvent("topicXYZ", "{\"a\":\"q\\\"\"}\n日本語", 1700000000L)
+        val ev = NostrProtocol.createEvent(22373, "topicXYZ", "{\"a\":\"q\\\"\"}\n日本語", 1700000000L)
         val body = org.json.JSONArray(ev).getJSONObject(1)
         val tags = body.getJSONArray("tags").toString()
-        val serialized = "[0,\"${body.getString("pubkey")}\",1700000000,29333,$tags,${NostrProtocol.jsonString(body.getString("content"))}]"
+        val serialized = "[0,\"${body.getString("pubkey")}\",1700000000,22373,$tags,${NostrProtocol.jsonString(body.getString("content"))}]"
         val id = java.security.MessageDigest.getInstance("SHA-256").digest(serialized.toByteArray()).toHex()
         assertEquals(id, body.getString("id"))
+        assertEquals(22373, body.getInt("kind"))
         assertTrue(Schnorr.verify(body.getString("sig").hexToBytes(), id.hexToBytes(), body.getString("pubkey").hexToBytes()))
+    }
+
+    @Test
+    fun subscribeRequestHasKindsAndTopics() {
+        val req = org.json.JSONArray(NostrProtocol.subscribe("sub1", listOf("aaa", "bbb"), 1700000000L))
+        assertEquals("REQ", req.getString(0))
+        val f = req.getJSONObject(2)
+        assertEquals(1700000000L, f.getLong("since"))
+        assertEquals(2, f.getJSONArray("#x").length())
+        val pres = org.json.JSONArray(NostrProtocol.subscribePresence("pochi-presence", 1700000000L)).getJSONObject(2)
+        assertEquals(1699999995L, pres.getLong("since"))
+        assertEquals(29334, pres.getJSONArray("kinds").getInt(0))
     }
 }

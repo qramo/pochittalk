@@ -12,7 +12,10 @@ import androidx.core.content.ContextCompat
 import app.pochitalk.audio.MicGain
 import app.pochitalk.audio.MicMonitor
 import app.pochitalk.audio.RadioSounds
+import app.pochitalk.rtc.PresenceClient
+import app.pochitalk.rtc.RelayList
 import app.pochitalk.rtc.Runtime
+import app.pochitalk.rtc.TurnClient
 import app.pochitalk.rtc.TrysteroNetwork
 import app.pochitalk.rtc.TrysteroRoom
 import app.pochitalk.service.CallService
@@ -48,13 +51,15 @@ import kotlin.math.sqrt
  */
 object PochiEngine {
     // ---- Web版と共通のプロトコル定数。変えるとWeb版と通話できなくなる
-    const val APP_ID = "pochitalk-walkie-talkie-cf-worker"
-    const val LOBBY_ROOM_ID = "pochitalk-lobby"
+    // 0.25.4 の通信形式は 0.20.0 と互換が無いので、識別名も新しくして、古い版とは別の世界にしている (Web版と同じ)
+    const val APP_ID = "pochitalk-v2"
+    const val BOT_ROOM_KEY = "7a0b07c1" // おうむ返しボットの部屋 (タグは固定)
+    const val MAX_ROOM = 8 // 1つの部屋は8人まで (Web版と同じ)
     private const val ACTION_PTT_STATE = "pttState"
     private const val ACTION_PTT_NAME = "pttName"
-    private const val ACTION_PRESENCE = "presence"
     private const val ACTION_ROOM_TAG = "roomTag" // Web版と共通: {tag, by, at}。話題タグ。新しい(at が大きい)ほうが勝つ
     private const val TAG_MAX = 30
+    private const val ACTION_FAX_PAGE = "faxPage" // Web版と共通: {c: 幅, d: base64}。FAX の中身 (14行ぶん・1画素1ビット)
     private const val ACTION_JOIN_AGE = "joinAge" // Web版と共通: 入室してからの経過時間を交換し、新しく来た側を判定する
 
     /** 招待URL。Web版の公開URLに合わせて変更する。 */
@@ -66,7 +71,9 @@ object PochiEngine {
     private const val PREF_VOX_THR = "pochitalk_vox_level"
     private const val PREF_MIC_GAIN = "pochitalk_input_db"      // Web版と同じキー名 (0〜30dB)
     private const val PREF_SFX_VOL = "pochitalk_sfx_vol"       // Web版と同じキー名 (0〜150%)
+    private const val PREF_PTT_POS = "pochitalk_ptt_pos"       // 話すボタンの位置。"left" / "right" のときだけ保存 (中央は標準)
     private const val PREF_LEFTY = "pochitalk_lefty"           // Web版と同じ: オンにしたときだけ "1" を保存
+    private const val PREF_AUTO_RECONNECT = "pochitalk_auto_reconnect" // 自動で再接続する: オンにしたときだけ "1" を保存 (標準はオフ)
     private const val PREF_WELCOME = "pochitalk_welcome"       // Web版と同じ: オフにしたときだけ "off" を保存
     private const val DEFAULT_VOX_STEP = 4
     private const val STREAM_ID = "pochitalk-audio"
@@ -74,7 +81,11 @@ object PochiEngine {
     /** 送信を続けるかの判定は、開始のしきい値より低くして (ヒステリシス)、語尾や言葉の間で切れないようにする。 */
     private const val VOX_HOLD_RATIO = 0.6f
     private const val VOX_COOLDOWN_MS = 700L
-    private const val LOBBY_STALE_MS = 15_000L
+    private const val LOBBY_STALE_MS = 20_000L   // 在室通知がこれだけ途絶えたら、一覧から消す (Web版 PRESENCE_EXPIRE_MS)
+    private const val PRESENCE_BEAT_MS = 6_000L  // 在室通知を流す間隔 (Web版 PRESENCE_BEAT_MS)
+    private const val MISMATCH_NOTIFY_MS = 10_000L
+    private const val MISMATCH_RECONNECT_MS = 25_000L
+    private const val AUTO_RECONNECT_GAP_MS = 90_000L
     private const val METER_INTERVAL_MS = 50L
     private const val RX_POLL_INTERVAL_MS = 150L
 
@@ -104,8 +115,15 @@ object PochiEngine {
     private var audioSource: AudioSource? = null
     private var audioTrack: AudioTrack? = null
 
-    private var lobby: TrysteroRoom? = null
-    private var presenceAction: TrysteroRoom.Action? = null
+    private val http by lazy { TrysteroNetwork.newHttpClient() }
+    private val turn by lazy { TurnClient(http, INVITE_BASE_URL + "api/turn") }
+    private var presence: PresenceClient? = null
+    private var presAnnounced = false
+    private var presLastSent = 0L
+    private var presPending: Job? = null
+    private var mismatchSince = 0L
+    private var mismatchNoted = false
+    private var lastAutoReconnect = 0L
     private class LobbyEntry(
         val key: String,
         val talking: Boolean,
@@ -120,8 +138,16 @@ object PochiEngine {
     private var room: TrysteroRoom? = null
     private var pttStateAction: TrysteroRoom.Action? = null
     private var pttNameAction: TrysteroRoom.Action? = null
-    private class PeerState(var name: String, var talking: Boolean, var joinJudged: Boolean = false)
+    private class PeerState(var name: String, var talking: Boolean, var joinJudged: Boolean = false, var enteredAt: Long = 0L)
     private val peers = LinkedHashMap<String, PeerState>()
+
+    /** モールスと FAX の受信 (相手の声から読む / faxPage のデータを紙に出す) */
+    private val rx = RxExtras(
+        Runtime.scope,
+        nameOf = { id -> peers[id]?.name ?: "" },
+        onMorse = { from, text -> _state.update { it.copy(morseText = text, morseFrom = from) } },
+        onFax = { paper -> _state.update { it.copy(fax = paper) } },
+    )
 
     private var myNickname = ""
     private var currentKey: String? = null
@@ -184,16 +210,21 @@ object PochiEngine {
         _state.update { it.copy(voxThreshold = voxMeterFraction(voxThreshold())) }
         val savedGain = prefs.getInt(PREF_MIC_GAIN, 0).coerceIn(0, 30)
         micGain.gain = Math.pow(10.0, savedGain / 20.0).toFloat()
-        _state.update { it.copy(micGainDb = savedGain, welcomeOn = prefs.getString(PREF_WELCOME, null) != "off") }
+        _state.update { it.copy(micGainDb = savedGain, welcomeOn = prefs.getString(PREF_WELCOME, null) != "off", autoReconnect = prefs.getString(PREF_AUTO_RECONNECT, null) == "1") }
         val savedSfx = prefs.getInt(PREF_SFX_VOL, 100).coerceIn(0, 150)
         sounds.volume = savedSfx / 100f
-        _state.update { it.copy(sfxVolume = savedSfx, lefty = prefs.getString(PREF_LEFTY, null) == "1") }
+        val savedPos = when (prefs.getString(PREF_PTT_POS, null)) {
+            "left" -> PttPosition.LEFT
+            "right" -> PttPosition.RIGHT
+            else -> PttPosition.CENTER
+        }
+        _state.update { it.copy(sfxVolume = savedSfx, lefty = prefs.getString(PREF_LEFTY, null) == "1", pttPos = savedPos) }
         refreshMicPermission()
         registerNetworkWatcher()
         Runtime.scope.launch { startNetwork() }
     }
 
-    private fun startNetwork() {
+    private suspend fun startNetwork() {
         PeerConnectionFactory.initialize(
             PeerConnectionFactory.InitializationOptions.builder(app).createInitializationOptions(),
         )
@@ -212,14 +243,15 @@ object PochiEngine {
             .setAudioProcessingFactory(processing)
             .createPeerConnectionFactory()
         factory = f
-        val iceServers = listOf(
-            PeerConnection.IceServer.builder("stun:stun.cloudflare.com:3478").createIceServer(),
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
-        )
-        val n = TrysteroNetwork(f, iceServers)
+        // TURN の資格情報は /api/turn から短命のものを受け取る (鍵は端末に持たない)。取れなければ STUN だけ
+        turn.refresh(force = true)
+        val (roomRelays, presenceRelays) = RelayList.pick(http)
+        Runtime.log("relays: room=$roomRelays presence=$presenceRelays turn=${turn.hasTurn}")
+        val n = TrysteroNetwork(f, { turn.iceServers }, roomRelays, http)
         net = n
+        presenceUrls = presenceRelays
         n.start()
-        joinLobby(n)
+        startPresence()
         _state.update { it.copy(ready = true) }
         renderScan()
         Runtime.scope.launch {
@@ -230,11 +262,30 @@ object PochiEngine {
         }
         Runtime.scope.launch {
             while (isActive) {
-                delay(4_000)
+                delay(PRESENCE_BEAT_MS)
                 val now = System.currentTimeMillis()
                 lobbyEntries.values.removeAll { now - it.ts > LOBBY_STALE_MS }
-                announce(null)
+                announce()
                 renderScan()
+            }
+        }
+        Runtime.scope.launch {
+            while (isActive) {
+                delay(3_000)
+                checkMismatch()
+                updateCounts()
+            }
+        }
+        Runtime.scope.launch {
+            while (isActive) {
+                delay(5_000)
+                checkRoomFull()
+            }
+        }
+        Runtime.scope.launch {
+            while (isActive) {
+                delay(5 * 60_000L)
+                turn.refresh() // 10分以内に取れていれば何もしない
             }
         }
     }
@@ -259,42 +310,90 @@ object PochiEngine {
 
     // ================================================================ ロビー (部屋一覧)
 
-    private fun joinLobby(n: TrysteroNetwork) {
-        val l = n.joinRoom(APP_ID, LOBBY_ROOM_ID)
-        lobby = l
-        val act = l.action(ACTION_PRESENCE)
-        presenceAction = act
-        act.onMessage = { msg, peerId ->
-            if (msg.isJson) {
-                val d = msg.json()
-                val ch = d.optString("ch", "")
-                if (isRoomKey(ch)) {
-                    lobbyEntries[peerId] = LobbyEntry(
-                        key = ch,
-                        talking = d.optBoolean("talking", false),
-                        name = d.optString("name", "?").take(12),
-                        ts = System.currentTimeMillis(),
-                        tag = capTag(d.optString("tag", "")),
-                        tagBy = d.optString("by", "").take(12),
-                        tagAt = d.optLong("at", 0L),
-                    )
-                    renderScan()
-                }
+    private var presenceUrls: List<String> = RelayList.NOSTR_RELAY_URLS.take(4)
+
+    /** 在室通知 (Nostr リレー) を始める。通話の接続とは別のしくみ (Web版の joinLobby)。 */
+    private fun startPresence() {
+        presence?.close()
+        val pc = PresenceClient(http, presenceUrls) { pubkey, d -> Runtime.scope.launch { onPresence(pubkey, d) } }
+        presence = pc
+        pc.start()
+    }
+
+    private fun onPresence(pubkey: String, d: JSONObject) {
+        val ch = d.optString("ch", "")
+        if (ch.isEmpty()) {
+            if (lobbyEntries.remove(pubkey) != null) renderScan()
+            return
+        }
+        if (!isRoomKey(ch)) return
+        val isNew = !lobbyEntries.containsKey(pubkey)
+        lobbyEntries[pubkey] = LobbyEntry(
+            key = ch,
+            talking = d.optBoolean("talking", false),
+            name = d.optString("name", "?").take(12),
+            ts = System.currentTimeMillis(),
+            tag = capTag(d.optString("tag", "")),
+            tagBy = d.optString("by", "").take(12),
+            tagAt = d.optLong("at", 0L),
+        )
+        if (isNew) {
+            // 新しく来た人に、こちらの在室をすぐ知らせる (Web版の announceSoon)
+            Runtime.scope.launch {
+                delay(300L + (Math.random() * 1200).toLong())
+                announce()
             }
         }
-        l.onPeerJoin = { peerId -> announce(peerId) }
-        l.onPeerLeave = { peerId ->
-            lobbyEntries.remove(peerId)
+        renderScan()
+    }
+
+    /**
+     * 部屋一覧 (在室通知) の取り直し (Web版の presenceRefresh): 画面に戻ったとき、回線が戻ったときに呼ぶ。
+     * 待ち時間をリセットし、開いているリレーには購読をやり直し、死んだ接続はつなぎ直して、
+     * 自分の在室をすぐ知らせ、一覧を描き直す。入室中でもホームでも効く。
+     */
+    fun refreshPresence() {
+        Runtime.scope.launch {
+            val p = presence ?: return@launch
+            Runtime.log("presence refresh")
+            p.refresh()
+            presLastSent = 0L // すぐ知らせられるように、間引きを解除
+            announce()
             renderScan()
         }
     }
 
-    /** いまどの部屋にいるかをロビーに知らせる (Web版の announce)。入室していなければ何も送らない。 */
-    private fun announce(to: String?) {
-        val key = currentKey ?: return
-        val msg = JSONObject().put("ch", key).put("talking", isTransmitting).put("name", myNickname)
-            .put("tag", roomMeta.tag).put("by", roomMeta.by).put("at", roomMeta.at)
-        presenceAction?.sendJson(msg, to)
+        /**
+     * いまどの部屋にいるかを知らせる (Web版の announce)。続けて呼ばれても1秒に1回にまとめる。
+     * 部屋にいないときは何も送らない (出たときだけ、1回「いない」と送る)。
+     */
+    private fun announce() {
+        val p = presence ?: return
+        val gap = System.currentTimeMillis() - presLastSent
+        if (gap < 1000) {
+            if (presPending == null) {
+                presPending = Runtime.scope.launch {
+                    delay(1000 - gap)
+                    presPending = null
+                    announce()
+                }
+            }
+            return
+        }
+        val key = currentKey
+        if (key == null) {
+            if (!presAnnounced) return
+            presAnnounced = false
+            presLastSent = System.currentTimeMillis()
+            p.publish(JSONObject().put("ch", ""))
+            return
+        }
+        presAnnounced = true
+        presLastSent = System.currentTimeMillis()
+        p.publish(
+            JSONObject().put("ch", key).put("talking", isTransmitting).put("name", myNickname)
+                .put("tag", roomMeta.tag).put("by", roomMeta.by).put("at", roomMeta.at),
+        )
     }
 
     private class Stat(
@@ -307,6 +406,7 @@ object PochiEngine {
     )
 
     private fun renderScan() {
+        updateCounts()
         val stats = HashMap<String, Stat>()
         for (e in lobbyEntries.values) {
             val s = stats.getOrPut(e.key) { Stat() }
@@ -369,6 +469,8 @@ object PochiEngine {
         if (!isRoomKey(key)) return
         if (isTransmitting) return flash("送信中は部屋を変えられません")
         if (key == currentKey) return flash("すでにこの部屋です")
+        // 満員の部屋には入れない (一覧の人数が上限のとき)
+        if (lobbyEntries.values.count { it.key == key } >= MAX_ROOM) return flash("この部屋は満員です（${MAX_ROOM}人まで）")
         leaveInternal(keepService = true)
         persistNickname()
         currentKey = key
@@ -389,7 +491,7 @@ object PochiEngine {
         resetStatus()
         _state.update { it.copy(currentKey = key, pendingKey = null) }
         renderPeers()
-        announce(null)
+        announce()
         renderScan()
     }
 
@@ -401,6 +503,15 @@ object PochiEngine {
         val nameAction = r.action(ACTION_PTT_NAME)
         val joinAgeAction = r.action(ACTION_JOIN_AGE)
         val tagAction = r.action(ACTION_ROOM_TAG)
+        val faxAction = r.action(ACTION_FAX_PAGE)
+        rx.clear() // 前の部屋の聞き取りをやめる
+        r.onRemoteAudio = { id, track -> rx.attach(id, track) }
+        faxAction.onMessage = { msg, peerId ->
+            if (msg.isJson) {
+                val j = msg.json()
+                rx.onFaxPage(peerId, j.optInt("c", 0), j.optString("d", ""))
+            }
+        }
         pttStateAction = stateAction
         pttNameAction = nameAction
         roomTagAction = tagAction
@@ -418,6 +529,16 @@ object PochiEngine {
         // 新しく来た人を判定して、すでに部屋にいる側だけ入室音を鳴らす (Web版と同じ仕組み)
         joinAgeAction.onMessage = { msg, peerId ->
             val peer = peers[peerId]
+            if (peer != null && msg.isJson) {
+                val a0 = msg.json().optLong("age", -1)
+                if (a0 >= 0) {
+                    peer.enteredAt = System.currentTimeMillis() - a0
+                    Runtime.scope.launch {
+                        delay(500)
+                        checkRoomFull()
+                    }
+                }
+            }
             if (peer != null && !peer.joinJudged && msg.isJson) {
                 val age = msg.json().optLong("age", -1)
                 if (age >= 0) {
@@ -434,7 +555,7 @@ object PochiEngine {
             if (msg.isJson) {
                 val d = msg.json()
                 val at = d.optLong("at", 0L)
-                if (at > roomMeta.at) {
+                if (at > roomMeta.at && currentKey != BOT_ROOM_KEY) { // ボットの部屋のタグは、ほかの人が送ってきても受け付けない
                     roomMeta = Meta(capTag(d.optString("tag", "")), d.optString("by", "").take(12), at)
                     publishMeta()
                 }
@@ -443,6 +564,10 @@ object PochiEngine {
         r.onPeerJoin = { peerId ->
             peers[peerId] = PeerState("接続中...", false)
             renderPeers()
+            Runtime.scope.launch {
+                delay(3_000)
+                checkRoomFull()
+            }
             nameAction.sendString(myNickname, peerId)
             if (roomMeta.at > 0) tagAction.sendJson(metaJson(), peerId) // 後から来た人にも、いまのタグを伝える
             val ageAtJoin = System.currentTimeMillis() - roomEnterTime
@@ -459,6 +584,7 @@ object PochiEngine {
         }
         r.onPeerLeave = { peerId ->
             peers.remove(peerId)
+            rx.detach(peerId)
             if (currentTalkerId == peerId) onStopReceiving()
             renderPeers()
         }
@@ -470,6 +596,11 @@ object PochiEngine {
         Runtime.scope.launch { leaveInternal(keepService = false) }
     }
 
+    /** 受信した FAX の紙を片づける (タップ)。 */
+    fun dismissFax() {
+        _state.update { it.copy(fax = null) }
+    }
+
     private fun leaveInternal(keepService: Boolean) {
         if (room == null && currentKey == null) return
         if (isTransmitting) {
@@ -478,6 +609,7 @@ object PochiEngine {
         }
         room?.leave()
         room = null
+        rx.clear()
         pttStateAction = null
         pttNameAction = null
         roomTagAction = null
@@ -494,7 +626,63 @@ object PochiEngine {
         }
         resetStatus()
         _state.update { it.copy(currentKey = null, peers = emptyList(), roomTag = "", roomTagBy = "") }
+        announce() // 出たことを1回だけ知らせる
         renderScan()
+    }
+
+    // ================================================================ 満員・つながり不一致の監視 (Web版の checkRoomFull / checkMismatch)
+
+    /**
+     * 同時に入って上限を超えたとき、入室が新しい人から、上限を超えた分が自分で退出する (古い人は追い出されない)。
+     * 入室時刻が分からない相手 (古い版など) は、古株として扱う。
+     */
+    private fun checkRoomFull() {
+        if (currentKey == null || room == null) return
+        if (peers.size + 1 <= MAX_ROOM) return
+        val members = ArrayList<Pair<String, Long>>()
+        members.add("me" to roomEnterTime)
+        peers.forEach { (id, p) -> members.add(id to p.enteredAt) }
+        members.sortWith { a, b -> if (a.second != b.second) a.second.compareTo(b.second) else a.first.compareTo(b.first) }
+        val myRank = members.indexOfFirst { it.first == "me" }
+        if (myRank < MAX_ROOM) return
+        leaveInternal(keepService = false)
+        flash("この部屋は満員のため、退出しました（${MAX_ROOM}人まで）")
+    }
+
+    /**
+     * 在室通知 (リレー経由) と、通話の接続 (WebRTC) は別のしくみなので、通知だけ先に見えて、接続がまだ、または失敗していることがある。
+     * 10秒以上ずれたら画面に知らせ、25秒以上ずれたら自動でつなぎ直す (つなぎ直しは90秒に1回まで)。
+     */
+    private fun checkMismatch() {
+        val cur = currentKey
+        if (cur == null || room == null) {
+            mismatchSince = 0L
+            mismatchNoted = false
+            return
+        }
+        val expected = lobbyEntries.values.count { it.key == cur }
+        val connected = peers.size
+        if (expected <= connected) {
+            mismatchSince = 0L
+            mismatchNoted = false
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (mismatchSince == 0L) mismatchSince = now
+        val dur = now - mismatchSince
+        if (dur > MISMATCH_NOTIFY_MS && !mismatchNoted) {
+            mismatchNoted = true
+            flash(
+                "ほかに ${expected - connected} 人が在室していますが、まだつながっていません" +
+                    if (_state.value.autoReconnect) "（つなぎ直しています）" else "（「再接続」を押すと、やり直せます）",
+            )
+        }
+        if (_state.value.autoReconnect && dur > MISMATCH_RECONNECT_MS && now - lastAutoReconnect > AUTO_RECONNECT_GAP_MS && !reconnecting) {
+            lastAutoReconnect = now
+            mismatchSince = now
+            mismatchNoted = false
+            Runtime.scope.launch { reconnectInternal(auto = true) }
+        }
     }
 
     /** 招待リンクで開かれた。自動では入室せず、一覧に「招待」として出す。 */
@@ -527,14 +715,14 @@ object PochiEngine {
 
     private fun publishMeta() {
         _state.update { it.copy(roomTag = roomMeta.tag, roomTagBy = roomMeta.by) }
-        announce(null)
+        announce()
         renderScan()
     }
 
     /** 部屋の話題タグをつける/変える (誰でも変えられ、付けた人の名前が添えられる)。空にすると消える。 */
     fun setTag(text: String) {
         Runtime.scope.launch {
-            if (currentKey == null) return@launch
+            if (currentKey == null || currentKey == BOT_ROOM_KEY) return@launch // おうむ返しの部屋のタグは固定
             val t = capTag(text)
             roomMeta = Meta(t, if (t.isNotEmpty()) myNickname else "", System.currentTimeMillis())
             roomTagAction?.sendJson(metaJson())
@@ -576,18 +764,25 @@ object PochiEngine {
                 _state.update { it.copy(ledRx = false) }
                 renderPeers()
             }
-            lobby?.leave()
-            lobby = null
-            presenceAction = null
+            presence?.close()
+            presence = null
             lobbyEntries.clear()
             renderScan()
-            n.reconnectRelays()
             delay(400) // 古い部屋の後始末 (leave) が終わるのを待つ
-            joinLobby(n)
+            n.close()
+            // 資格情報を取り直し、動いているリレーを選び直してから、つなぎ直す (Web版の reconnectRoom と同じ)
+            turn.refresh(force = true)
+            val (roomRelays, presenceRelays) = RelayList.pick(http)
+            val f = factory ?: return
+            val n2 = TrysteroNetwork(f, { turn.iceServers }, roomRelays, http)
+            net = n2
+            presenceUrls = presenceRelays
+            n2.start()
+            startPresence()
             if (key != null && currentKey == key) { // 待っている間に退出・移動していなければ、部屋につなぎ直す
-                connectRoom(n, key)
+                connectRoom(n2, key)
                 renderPeers()
-                announce(null)
+                announce()
             }
             renderScan()
             flash("再接続しました。相手が見つかるまで少し待ってください")
@@ -611,7 +806,8 @@ object PochiEngine {
                     val changed = (lastNet != null && lastNet != network) || hadLoss
                     lastNet = network
                     hadLoss = false
-                    if (changed) reconnect(auto = true)
+                    refreshPresence() // 回線が戻ったら、部屋一覧もすぐ取り直す
+                    if (changed && _state.value.autoReconnect) reconnect(auto = true)
                 }
 
                 override fun onLost(network: Network) {
@@ -632,12 +828,13 @@ object PochiEngine {
     }
 
     fun onAppForeground() {
+        refreshPresence() // 画面に戻ったら、部屋一覧を取り直す (どれだけ離れていても)
         val since = hiddenAt
         hiddenAt = 0
         if (since == 0L || System.currentTimeMillis() - since < 20_000) return
         Runtime.scope.launch {
             // 通話中 (相手とつながっている) は、サービスで接続が生きているので、つなぎ直さない
-            if (peers.isEmpty()) reconnectInternal(auto = true)
+            if (peers.isEmpty() && _state.value.autoReconnect) reconnectInternal(auto = true)
         }
     }
 
@@ -653,7 +850,7 @@ object PochiEngine {
         Runtime.scope.launch {
             persistNickname()
             pttNameAction?.sendString(myNickname)
-            announce(null)
+            announce()
             renderScan()
         }
     }
@@ -680,7 +877,10 @@ object PochiEngine {
         }
         val source = f.createAudioSource(constraints)
         val track = f.createAudioTrack("pochitalk-mic", source)
-        track.setEnabled(false) // ボタンを押している間だけ有効にする (Web版と同じ)
+        // トラックは有効のままにして、録音を動かし続ける。送信しない間は MicGain.muted で無音にする
+        // (トラックを無効にすると libwebrtc が録音を止めて、押すたびに約0.4秒の起動待ちが出る)
+        track.setEnabled(true)
+        micGain.muted = true
         audioSource = source
         audioTrack = track
         room?.addLocalTrack(track, STREAM_ID)
@@ -741,12 +941,32 @@ object PochiEngine {
      * 送信が始まると止める (送信中は libwebrtc が録音するため)。
      */
     private var lastMonitorCheck = 0L
+
+    private fun setMicMuted(muted: Boolean) {
+        micGain.muted = muted
+    }
+
+    /**
+     * 見張り: 録音が動いている (音声フレームが来ている) のに、無音化の処理が呼ばれていないときは、
+     * 送信しない間も音が漏れてしまう。その場合は、トラックを無効にして (古い方式で) 止める。
+     */
+    private fun checkMuteGuard(now: Long) {
+        if (isTransmitting || audioTrack == null) return
+        val framesFlowing = now - lastRtcAt < 300
+        if (framesFlowing && now - micGain.lastProcessAt > 800) {
+            Runtime.log("mute guard: processor not running while capturing -> disabling the track")
+            audioTrack?.setEnabled(false)
+        }
+    }
     private fun updateMicMonitor() {
         // libwebrtc が録音中 (送信中、または接続直後の短い間) は、待機用の録音を止めておく。
         // 録音の停止通知が来ない場合に備えて、4秒たったら止まったものとみなす。
         val now = System.currentTimeMillis()
-        val rtcBusy = rtcRecording && (isTransmitting || now - rtcRecordingSince < 4_000 || now - txEndedAt < 3_000)
-        val want = (room != null || micTest) && micGranted() && !isTransmitting && !rtcBusy
+        // libwebrtc の録音は、部屋に相手がいる間ずっと動き続ける。動いている間は、待機用の録音を止めておく。
+        // (停止の通知が来なくても、音声フレームが2秒来なければ、止まったものとみなす)
+        val rtcBusy = rtcRecording && (now - rtcRecordingSince < 1_500 || now - lastRtcAt < 2_000)
+        // 相手がいない部屋 (libwebrtc が録音しない) で話しているときも、レベルメーターが振れるように、待機用の録音を続ける
+        val want = (room != null || micTest) && micGranted() && (!isTransmitting || peers.isEmpty()) && !rtcBusy
         if (want) micMonitor.start() else micMonitor.stop()
     }
 
@@ -810,11 +1030,12 @@ object PochiEngine {
         if (!pressed) return
         isTransmitting = true
         micMonitor.stopAndWait() // 録音を1つずつにするため、送信を始める前に待機用を解放する
-        track.setEnabled(true)
+        track.setEnabled(true) // (見張りで無効にされていた場合に備えて)
+        setMicMuted(false)
         setStatus(StatusKind.TX, "TX (送信中)", ledTx = true, ledRx = _state.value.ledRx)
         sounds.playStart()
         pttStateAction?.sendJson(JSONObject().put("isTalking", true))
-        announce(null)
+        announce()
         renderScan()
     }
 
@@ -822,11 +1043,11 @@ object PochiEngine {
         if (!isTransmitting) return
         isTransmitting = false
         txEndedAt = System.currentTimeMillis()
-        audioTrack?.setEnabled(false)
+        setMicMuted(true)
         updateMicMonitor()
         _state.update { it.copy(ledTx = false) }
         pttStateAction?.sendJson(JSONObject().put("isTalking", false))
-        announce(null)
+        announce()
         renderScan()
     }
 
@@ -834,7 +1055,7 @@ object PochiEngine {
         if (!isTransmitting) return
         isTransmitting = false
         txEndedAt = System.currentTimeMillis()
-        audioTrack?.setEnabled(false)
+        setMicMuted(true)
         updateMicMonitor()
         val talker = currentTalkerId?.let { peers[it] }
         if (talker != null) {
@@ -845,14 +1066,16 @@ object PochiEngine {
         _state.update { it.copy(ledTx = false) }
         if (!quiet) sounds.playEnd()
         pttStateAction?.sendJson(JSONObject().put("isTalking", false))
-        announce(null)
+        announce()
         renderScan()
     }
 
     private fun onPttState(peerId: String, talking: Boolean) {
         val peer = peers[peerId]
+        Runtime.log("pttState from ${peerId.take(5)} talking=$talking")
         if (peer != null) peer.talking = talking
         if (talking) {
+            rx.onTalkStart(peerId)
             currentTalkerId = peerId
             if (isTransmitting) {
                 // ほぼ同時に話し始めた: お互いの送信が切れて混線
@@ -907,6 +1130,25 @@ object PochiEngine {
     private fun renderPeers() {
         val list = peers.map { (id, p) -> PeerInfo(id, p.name, p.talking) }
         _state.update { it.copy(peers = list) }
+        updateCounts()
+    }
+
+    /** 参加者一覧の「接続 N / 在室 M」: N = 実際につながっている人 + 自分、M = 部屋一覧 (Nostr) の人数 (N 未満にはしない)。 */
+    private fun updateCounts() {
+        val cur = currentKey
+        if (cur == null || room == null) {
+            _state.update { if (it.connectedCount == 0 && it.presentCount == 0) it else it.copy(connectedCount = 0, presentCount = 0) }
+            return
+        }
+        val n = peers.size + 1
+        val m = maxOf(n, lobbyEntries.values.count { it.key == cur })
+        _state.update { if (it.connectedCount == n && it.presentCount == m) it else it.copy(connectedCount = n, presentCount = m) }
+    }
+
+    /** 自動で再接続するか (標準はオフ)。オフでも、手動の「再接続」とマイクの取り直しは今までどおり。 */
+    fun setAutoReconnect(on: Boolean) {
+        _state.update { it.copy(autoReconnect = on) }
+        if (on) prefs.edit().putString(PREF_AUTO_RECONNECT, "1").apply() else prefs.edit().remove(PREF_AUTO_RECONNECT).apply()
     }
 
     private fun flash(text: String) {
@@ -971,6 +1213,16 @@ object PochiEngine {
     fun setLefty(on: Boolean) {
         _state.update { it.copy(lefty = on) }
         if (on) prefs.edit().putString(PREF_LEFTY, "1").apply() else prefs.edit().remove(PREF_LEFTY).apply()
+    }
+
+    /** 話すボタンの位置 (左 / 中央 / 右)。中央以外のときだけ保存する。 */
+    fun setPttPosition(pos: PttPosition) {
+        _state.update { it.copy(pttPos = pos) }
+        when (pos) {
+            PttPosition.LEFT -> prefs.edit().putString(PREF_PTT_POS, "left").apply()
+            PttPosition.RIGHT -> prefs.edit().putString(PREF_PTT_POS, "right").apply()
+            PttPosition.CENTER -> prefs.edit().remove(PREF_PTT_POS).apply()
+        }
     }
 
     /** スピーカーのミュート切り替え (相手の声と効果音を止める。マイクは止めない)。 */
@@ -1096,6 +1348,7 @@ object PochiEngine {
         if (now - lastMonitorCheck >= 500) {
             lastMonitorCheck = now
             updateMicMonitor()
+            checkMuteGuard(now)
         }
         val micNow = currentMicLevel(now)
         var label = "LEVEL"

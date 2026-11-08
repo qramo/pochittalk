@@ -17,6 +17,9 @@ data class PeerInfo(val id: String, val name: String, val talking: Boolean)
 
 enum class StatusKind { STANDBY, TX, RX, CROSSTALK }
 
+/** 話すボタンを置く位置 (設定で選ぶ)。中央が標準。 */
+enum class PttPosition { LEFT, CENTER, RIGHT }
+
 /** 液晶の音量レベルメーター (Web版の LEVEL / MIC / TX / RX 表示)。 */
 data class MeterState(
     val label: String = "LEVEL",
@@ -48,6 +51,8 @@ data class UiState(
     val sfxVolume: Int = 100,
     /** 左手用: VOX ボタンを話すボタンの右側に置く。 */
     val lefty: Boolean = false,
+    /** 話すボタンの位置 (左 / 中央 / 右)。Android 版の設定。 */
+    val pttPos: PttPosition = PttPosition.CENTER,
     /** スピーカーのミュート (相手の声と効果音を止める。マイクは止めない)。 */
     val speakerMuted: Boolean = false,
     /** 入力レベル (マイクの増幅)。0〜30 dB。 */
@@ -62,6 +67,16 @@ data class UiState(
     /** 再接続の途中 (ボタンを押せなくする)。 */
     val reconnecting: Boolean = false,
     val micGranted: Boolean = false,
+    /** 受信したモールスを読んだ文字列 (Web版の液晶の下の行)。空なら何も出さない。 */
+    val morseText: String = "",
+    val morseFrom: String = "",
+    /** 受信した FAX の紙。null なら出さない。 */
+    val fax: FaxPaper? = null,
+    /** 自動で再接続する (設定。標準はオフ)。 */
+    val autoReconnect: Boolean = false,
+    /** 「接続 N / 在室 M」。N = つながっている人 + 自分、M = 部屋一覧の人数 (N 未満にはしない)。入室していなければ 0。 */
+    val connectedCount: Int = 0,
+    val presentCount: Int = 0,
 )
 
 /** UI (Activity) に頼む一回限りの操作。 */
@@ -73,3 +88,6 @@ sealed interface UiEvent {
 fun formatKey(key: String): String = key.take(4).uppercase() + "·" + key.drop(4).uppercase()
 
 fun isRoomKey(s: String?): Boolean = s != null && Regex("^[0-9a-f]{8}$").matches(s)
+
+/** 受信中の FAX の紙 (Web版と同じ 15 行。[shownRows] 行目まで出ている)。黒い画素は [black] (行 × 列)。 */
+class FaxPaper(val cols: Int, val black: BooleanArray, val shownRows: Int, val from: String)

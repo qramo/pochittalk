@@ -19,6 +19,16 @@ class MicGain : ExternalAudioProcessingFactory.AudioProcessing {
     /** 線形の係数 (1.0 = そのまま)。 */
     @Volatile var gain: Float = 1f
 
+    /**
+     * true の間は、送信する音声を無音にする (ボタンを押していない間)。
+     * 録音は止めずに動かしたままにして、押した瞬間に音が出るようにするため (録音を止めて起動し直すと約0.4秒かかる)。
+     * 既定は true (= 無音)。送信を始めるときだけ false にする。
+     */
+    @Volatile var muted: Boolean = true
+
+    /** この処理が最後に呼ばれた時刻。録音が動いているのに、これが更新されないときは、無音化が効いていない (見張り用)。 */
+    @Volatile var lastProcessAt: Long = 0L
+
     /** 実機での検証用: 無音の部屋でも増幅の効果が見えるように、小さなテスト音を足す。通常は false。 */
     @Volatile var testTone: Boolean = false
     private var phase = 0.0
@@ -28,6 +38,14 @@ class MicGain : ExternalAudioProcessingFactory.AudioProcessing {
     override fun reset(newRate: Int) {}
 
     override fun process(numBands: Int, numFrames: Int, buffer: ByteBuffer) {
+        val now = System.currentTimeMillis()
+        lastProcessAt = now
+        if (muted) {
+            // 送信しない間は、全部ゼロにする
+            val z = buffer.order(ByteOrder.nativeOrder()).asFloatBuffer()
+            for (i in 0 until z.limit()) z.put(i, 0f)
+            return
+        }
         val g = gain
         val tone = testTone
         if (g == 1f && !tone) return

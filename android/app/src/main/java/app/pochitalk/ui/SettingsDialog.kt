@@ -35,6 +35,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.pochitalk.engine.PochiEngine
+import app.pochitalk.engine.PttPosition
 import app.pochitalk.engine.UiState
 
 private val LinkStyle = TextLinkStyles(SpanStyle(color = Color(0xFF93C5FD), textDecoration = TextDecoration.Underline))
@@ -92,7 +93,18 @@ fun SettingsDialog(state: UiState, actions: Actions, onShowAbout: () -> Unit, on
                 ) { Text(if (state.micTest) "マイクテスト停止" else "マイクテスト開始") }
 
                 SectionTitle("操作")
-                SwitchRow("左手用（VOX ボタンを話すボタンの右側に置く）", state.lefty) { PochiEngine.setLefty(it) }
+                Text("話すボタンの位置", color = PochiColors.Text, fontSize = 13.sp)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(PttPosition.LEFT to "左", PttPosition.CENTER to "中央", PttPosition.RIGHT to "右").forEach { (pos, label) ->
+                        SubButton(
+                            onClick = { PochiEngine.setPttPosition(pos) },
+                            modifier = Modifier.weight(1f),
+                            container = if (state.pttPos == pos) PochiColors.Accent else Color(0xFF374151),
+                        ) { Text(label, fontWeight = if (state.pttPos == pos) FontWeight.Bold else FontWeight.Normal) }
+                    }
+                }
+                Text("VOX のボタンは、話すボタンの空いている側に付きます。", color = PochiColors.Muted, fontSize = 12.sp)
+                SwitchRow("左手用（話すボタンが中央のとき、VOX ボタンを右側に置く）", state.lefty) { PochiEngine.setLefty(it) }
 
                 SectionTitle("効果音")
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -107,6 +119,10 @@ fun SettingsDialog(state: UiState, actions: Actions, onShowAbout: () -> Unit, on
                     steps = 29,
                 )
                 Text("スライダーを離すと、試しに「ガッ」と鳴ります。効果音を消したいときは、音量を 0% にしてください。", color = PochiColors.Muted, fontSize = 12.sp)
+
+                SectionTitle("再接続")
+                SwitchRow("自動で再接続する", state.autoReconnect) { PochiEngine.setAutoReconnect(it) }
+                Text("オフのときは、人数のずれ・回線の復帰・画面に戻ったときに、自動ではつなぎ直しません。つながらないときは、「再接続」を押してください。", color = PochiColors.Muted, fontSize = 12.sp)
 
                 SectionTitle("初回案内")
                 SwitchRow("開いたときに初回案内を表示する", state.welcomeOn) { PochiEngine.setWelcomeOn(it) }

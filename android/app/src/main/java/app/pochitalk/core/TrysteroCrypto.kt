@@ -26,6 +26,10 @@ object TrysteroCrypto {
         return sb.toString()
     }
 
+    /** 0.25.4 の deriveRoomNamespace: 共有ピア上で部屋を見分けるトークン = hex(SHA-256("Trystero:appId:roomId"))。 */
+    fun deriveRoomNamespace(appId: String, roomId: String): String =
+        MessageDigest.getInstance("SHA-256").digest("Trystero:$appId:$roomId".toByteArray(Charsets.UTF_8)).toHex()
+
     fun genKey(secret: String, appId: String, roomId: String): SecretKeySpec {
         val raw = MessageDigest.getInstance("SHA-256")
             .digest("$secret:$appId:$roomId".toByteArray(Charsets.UTF_8))

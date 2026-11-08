@@ -1,160 +1,80 @@
-# ぽちっと通話 Android版 (Kotlin / ネイティブ) — α
+# ぽちっと通話 Android版 (Kotlin / ネイティブ) — α 0.4.0
 
 Web版 (`../worker.js`) と**同じ部屋で相互に通話できる**ネイティブアプリです。
-Web版が使っている [Trystero](https://github.com/dmotz/trystero) 0.20.0 の nostr 方式を Kotlin で再実装しています。
+Web版が使っている [Trystero](https://github.com/dmotz/trystero) **0.25.4** の nostr 方式を Kotlin で再実装しています。
 
-> **状態: 未ビルド・未実機テストです。** この作業環境には Android SDK がなく、APK のビルドも実機での通話も試せていません。
-> 何を確認できていて、何が未確認かは下の「検証状況」を読んでください。
+> **0.4.0-alpha は通信形式が変わりました。** 旧Android版 (0.3.0 以前) や旧Web版 (Trystero 0.20.0) とは、お互いに見えず、通話もできません
+> (識別名 `pochitalk-v2` が別で、通信の形式も違うため)。Web版も 0.25.4 の版 (`/version` が `trystero: 0.25.4`) が必要です。
 
-## ビルドと起動 (Android Studio)
+## ビルド
 
-1. Android Studio (Ladybug 以降) で **このフォルダ (`android/`)** を開く。初回は Gradle 同期が走り、Android SDK 35 のインストールを求められることがあります。
-2. JDK は Android Studio 同梱の JDK 17 以上を使う (Gradle 8.9 / AGP 8.7.3)。
-3. 実機 (Android 8.0 / API 26 以上) をUSBデバッグで接続して ▶ を押す。エミュレータでも通話の確認はできますが、マイクの設定がやや面倒なので実機推奨。
-4. コマンドラインなら:
-   ```bash
-   ./gradlew :app:testDebugUnitTest   # 署名・暗号・フレーミングの単体テスト (7件)
-   ./gradlew :app:assembleDebug       # app/build/outputs/apk/debug/app-debug.apk
-   ```
-5. 通信のログは `adb logcat -s Pochitalk` で見られます (リレー接続、ICE状態、`connect` など)。
+```bash
+./gradlew :app:testDebugUnitTest   # 署名・暗号・フレーミングの単体テスト (本物の Trystero 0.25.4 の出力と照合)
+./gradlew :app:assembleDebug       # app/build/outputs/apk/debug/app-debug.apk
+```
+
+JDK 17、Android SDK 35。通信のログは `adb logcat -s Pochitalk` で見られます。
 
 ### 設定したい場所
 
 | 何を | どこを |
 |---|---|
-| 招待URLのベース (Web版の公開URL) | `engine/PochiEngine.kt` の `INVITE_BASE_URL` と、`AndroidManifest.xml` の `android:host` |
-| STUN サーバー | `PochiEngine.startNetwork()` の `iceServers` |
-| Nostr リレー | `rtc/TrysteroNetwork.kt` の `DEFAULT_RELAYS` (**Web版の先頭5件と同じにしておくこと**) |
+| 招待URL・TURN 資格情報の取得先 (Web版の公開URL) | `engine/PochiEngine.kt` の `INVITE_BASE_URL` と、`AndroidManifest.xml` の `android:host` |
+| Nostr リレー (**Web版の `NOSTR_RELAY_URLS` と同じ7本**) | `rtc/Lobby.kt` の `RelayList.NOSTR_RELAY_URLS` |
 | 「このアプリについて」の本文 | `ui/AboutContent.kt` (保存・送信するデータを変えたら必ず更新) |
 
 ## Web版との互換性を決めている定数 (変えると通話できなくなる)
 
-- appId `pochitalk-walkie-talkie-cf-worker`、ロビー部屋 `pochitalk-lobby`、通話部屋 `h-<8桁の16進ハッシュ>`
-- アクション名と中身: `pttState` `{isTalking}` / `pttName` 文字列 / `joinAge` `{age}` (入室してからの経過ms。新しく来た側を判定して入室音を鳴らす) / `roomTag` `{tag, by, at}` (話題タグ。`at` が大きいほうが勝つ) / ロビー `presence` `{ch, talking, name, tag, by, at}`
+- appId `pochitalk-v2`、通話部屋 `h-<8桁の16進ハッシュ>`、1部屋8人まで
+- アクション名: `pttState` `{isTalking}` / `pttName` 文字列 / `joinAge` `{age}` / `roomTag` `{tag, by, at}`。`faxPage` `{c, d}` (FAX の中身: 幅と、14行ぶん・1画素1ビットの base64) は受け取って紙に出す。それ以外の知らない名前は組み立てずに捨てる
+- 部屋一覧は WebRTC ではなく Nostr の在室通知: kind 29334 / タグ `x` = `pochitalk-presence-v1` / content `{ch, talking, name, tag, by, at}`、6秒おき、20秒で失効
 - 招待URLは `?r=<ハッシュ>` (Web版と同じ)。ネイティブ側は `pochitalk://join?r=<ハッシュ>` も受け付けます
 
 ## 構成
 
 ```
 app/src/main/java/app/pochitalk/
-├─ core/      純Kotlin。Android/WebRTC に依存しない部分 (JVMで単体テスト可能)
+├─ core/      純Kotlin (JVMで単体テスト可能)
 │   ├─ Schnorr.kt          BIP340 署名 (Nostrのイベント署名)。外部ライブラリ無し
-│   ├─ NostrProtocol.kt    イベント(kind 29333, tag x)の作成・購読メッセージ
-│   ├─ NostrClient.kt      リレーとのWebSocket (OkHttp)、再接続と購読の再送
-│   ├─ TrysteroCrypto.kt   topic = SHA-1 を1バイトずつ base36、AES-GCM でSDPを暗号化
-│   └─ ActionCodec.kt      room.js のデータチャネル上のフレーミング
-├─ rtc/       Trystero / simple-peer の移植 (libwebrtc を使う)
-│   ├─ RtcPeer.kt          simple-peer: trickle無し、DataChannel、再ネゴシエーション
-│   ├─ TrysteroRoom.kt     strategy.js(announce/offer/answer) + room.js(アクション)
-│   ├─ TrysteroNetwork.kt  リレー5本の共有、購読の振り分け
+│   ├─ NostrProtocol.kt    イベント (kind は topic ごと: strToNum(topic,1e4)+2e4) と購読 (複数 topic を1本にまとめる)
+│   ├─ NostrClient.kt      リレーとのWebSocket、再接続と購読の再送
+│   ├─ TrysteroCrypto.kt   topic = SHA-1 を1バイトずつ base36、AES-GCM、部屋トークン (deriveRoomNamespace)
+│   └─ ActionCodec.kt      アクションのフレーム (名前32バイト+nonce2バイト+tag+progress) と、部屋トークン付きフレーム
+├─ rtc/       Trystero 0.25.4 の移植 (libwebrtc を使う)
+│   ├─ RtcPeer.kt          peer.ts: ICE 候補を少しずつ送る (trickle)、Perfect Negotiation、切断の検知
+│   ├─ TrysteroRoom.kt     相手探し (announce / offer / answer / candidate)、接続後の確認 (@_hsready)、アクション
+│   ├─ TrysteroNetwork.kt  リレー接続の共有、購読の振り分け、selfId
+│   ├─ Lobby.kt            在室通知 (部屋一覧)、リレーの選別 (動いているものを全部/4本)、TURN 資格情報の取得
 │   └─ Runtime.kt          通信は全部この単一スレッドで処理 (JSの前提を保つため)
-├─ engine/    アプリのふるまい (Web版のクライアントJSに対応)
-│   ├─ PochiEngine.kt      ロビー、入退室、PTT、話中ロック、混線、VOX、効果音
-│   └─ UiState.kt
-├─ audio/RadioSounds.kt   ガッ(終了音)・話中・混線・ザーッ をPCMで合成
-├─ service/CallService.kt  通話を続けるフォアグラウンドサービス (microphone)
-└─ ui/ Compose の画面 (ホーム / 無線機 / このアプリについて)
+├─ engine/    アプリのふるまい (PochiEngine: 入退室、PTT、話中ロック、混線、VOX、満員、つながり不一致の監視)
+├─ audio/     効果音、マイクの増幅/ミュート、待機中のマイク監視
+├─ service/   通話を続けるフォアグラウンドサービス (microphone)
+└─ ui/        Compose の画面
 ```
 
-### 通信の流れ (ブラウザ版と同じ)
+### 通信の流れ (Web版と同じ)
 
-1. 全員が Nostr リレー5本に、部屋ごとの **rootTopic** (`sha1("Trystero@appId@roomId")`) と、自分宛の **selfTopic** を購読する。
-2. 5.3秒おきに rootTopic へ `{"peerId": selfId}` を投稿 (announce)。
-3. announce を見た側が WebRTC のオファーを作り、**AES-GCM で暗号化したSDP**を相手の selfTopic へ投稿。相手がアンサーを返す。
-   同時にオファーを出し合ったら、selfId が大きい側が自分のオファーを優先する。
-4. 接続後は DataChannel 上のアクション (12バイトの名前 + nonce + tag + progress + 本文) で `pttState` などをやり取りする。
-5. 音声は **接続後に** トラックを追加し、再ネゴシエーションで流す。ノンイニシエータ側は自分でオファーを作れないので、
-   データチャネルの `@_signal` で `renegotiate` / `transceiverRequest` をイニシエータに依頼する (simple-peer と同じ)。
+1. 部屋ごとの **rootTopic** (`sha1("Trystero@appId@roomId")`) と自分宛の **selfTopic** を、動いているリレー (全部) に購読する。
+2. rootTopic に `{"peerId": selfId}` を投稿 (announce): 0.23秒・0.5秒・1.3秒のあとは60秒おき。相手が消えたときも最初からやり直す。
+3. announce を見たら、**selfId が小さい側**がオファーを作り、相手の selfTopic へ送る。大きい側は自分の announce を返して待つ。
+   オファー/アンサー/候補は AES-GCM で暗号化した文字列 `{peerId, offerId, offer|answer|candidate}`。候補は少しずつ送る。
+4. データチャネルが開いたら、部屋トークン付きのフレームで在室を知らせ、`@_hsready` を送り合って、両方そろったら入室扱い。
+   接続後の SDP と候補は `@_signal` で送る。音声は `@_stream` のメタ情報 `{k, s}` を先に送ってからトラックを足す (ブラウザ側が再生に使う)。
+5. TURN は端末に鍵を持たず、Web版の `/api/turn` から短命の資格情報を受け取る (直接つなぐのを優先し、だめなときだけ中継)。
 
-## 検証状況
+**Android の selfId は先頭が `00`** です (`TrysteroNetwork.SELF_ID`)。Android が必ずオファー側になるようにするための工夫で、
+Web版 (0.25.4) が作り置きから出すオファーは、57秒以上たつとブラウザの挙動で中身の無い SDP になり、
+ブラウザがオファー側のときにつながらないことがあるため (`m=` 行が無いオファーは、受け取っても無視して announce をやり直します)。
 
-### 確認できたこと (この作業環境で実際に実行)
+## 検証状況 (0.4.0-alpha)
 
-- **署名・暗号・フレーミングの一致**: BIP340 公式テストベクタ (0〜2) と、@noble/curves・本物の Trystero の `crypto.js` / `room.js` の出力に対して、
-  署名・公開鍵・topic・AES-GCM暗号文・フレームのバイト列が**完全一致**。Kotlin→JS の向きも本物の `room.js` と noble で確認。
-  (JVM + JUnit の単体テスト `ProtocolTest` 7件が通る)
-- **実際のNostrリレー**: 署名したイベントを `relay.nostr.net` / `relay.snort.social` / `relay.piazza.today` が受理し、購読に返ってくることを確認。
-- **本物の Trystero(JS) との信号層の相互動作**: JS側が出す announce を Kotlin が検出 → JSが送ってきた暗号化オファーを Kotlin が復号できた
-  (topic 計算・AES鍵・JSON形式・リレー経由の配送が一致)。ただしJS側のWebRTCはスタブで、SDPは偽物。
-- **型チェック**: アプリ全体のKotlinを、実物の `stream-webrtc-android 1.3.10`・Android 15・OkHttp・coroutines・Compose 1.7.4 のクラスに対して `kotlinc` で通した
-  (Compose コンパイラプラグインを使わないフロントエンド解析のみ)。
-- 検証に使ったスクリプトは `tools/interop-check/` にあります (手順は同フォルダのファイル冒頭を参照。JS側は Trystero のソースと npm パッケージが別途必要)。
+実機 (Pixel 3a / Galaxy SCV38) と、公開中の Web版 (0.25.4)・おうむ返しボット (`/bot`、部屋 `7a0b07c1`) で確認:
 
-### 未確認のこと (実機でやってみないと分からない)
+- 単体テスト: 署名・topic・kind・部屋トークン・暗号文の復号・アクションのフレーム・部屋フレームが、本物の Trystero 0.25.4 のコードの出力と一致
+- 部屋一覧 (Nostr の在室通知) の受信、入室、ブラウザ↔Android の相互の名前表示
+- Android→ブラウザの音声 (RX 点灯とレベル)、ブラウザ→Android の音声 (RX 0 dB)
+- ブラウザから送ったモールス (SOS) の文字起こしと、FAX (HELLO) の紙の表示 (Galaxy 実機)
+- Android 同士 + ブラウザの3者の相互接続、オファー側/アンサー側の両方
+- つながり不一致の通知と自動つなぎ直し (25秒)
 
-- **Gradle / AGP / Compose プラグインでのビルド**、リソースXML、マニフェストの検証 (aapt) は未実施。
-- **実際のWebRTC接続**: Android の libwebrtc とブラウザの間の ICE、DataChannel、音声の送受信。
-- **再ネゴシエーション**: 接続後の音声トラック追加 (`renegotiate` / `transceiverRequest` の往復)。simple-peer のロジックを忠実に移植したが、
-  ブラウザ相手で動くかは未確認。Android側が `RtpTransceiver.mid` と `addTransceiver` に依存している。
-- **VOX**: libwebrtc は送信トラックが無効の間は録音を止める (実機のログで確認: `webrtc recording start` の直後に `stop`)。そのため待機中の音量は、別の `AudioRecord` (`audio/MicMonitor.kt`、入力は libwebrtc と同じ `VOICE_COMMUNICATION`) で測り、送信が始まったら止めて libwebrtc の録音の音量に切り替える。だれとも接続していなくても動く。
-  音量メーターと VOX が実際の声で反応するか、しきい値は、Androidの入力がWeb版より小さいため **Android専用の対数目盛り `0.0015 × 1.44^(値 - 1)` (0.0015〜0.04)、初期値4** にしている (Web版は `0.02 + (値 - 1) × 0.007`、初期値6。実機で、機種ごとに入力レベルが4〜10倍違った: Pixel の話し声は 0.02〜0.09、Galaxy は 0.005〜0.014)。端末には `pochitalk_vox_level` で保存。VOXメーターは音量を dB (-60〜-20dB) の対数で表示する。しきい値が低いほど周囲の雑音に反応しやすいので、環境に合わせて調整する。
-- **入力レベル (マイクの増幅 0〜30dB)**: libwebrtc のキャプチャ後処理 (`ExternalAudioProcessingFactory`、`audio/MicGain.kt`) でサンプルに係数を掛ける。\
-  Web版に合わせて、ホーム画面の「⚙ 設定」の中にある (入力レベルのスライダー、MIC メーター、マイクテスト)。保存キーも Web版と同じ `pochitalk_input_db`。\
-  実機で確認済み: 処理に渡されるバッファは float (48kHz で 480サンプル/10ms)。テスト音を足した状態で +24dB に設定すると、相手側の受信レベルが約24dB上がった。\
-  Web版と同じく、**メーターと VOX の判定は入力レベル (増幅) を掛けたあとの音量**で見る。機種ごとにマイクの大きさが違う (Pixel に対して Galaxy は 1/4〜1/10) ための調整用。
-- **設定 / 初回案内 / 入室音 (Web版に合わせた)**: 設定ダイアログ (マイクテスト、初回案内の表示、ソース・ライセンス、このアプリについて)、起動時の初回案内 (`pochitalk_welcome` に、オフにしたときだけ `off` を保存)、
-  入室音「ピコーン」。入室音は `joinAge` を交換して新しく来た側を判定し、**すでに部屋にいる側だけ**が鳴らす (実機2台のログで、既存側=鳴らす/新規側=鳴らさない を確認)。入室すると VOX はオフに戻る。
-- **見た目 (Web版に合わせた)**: ボタンはWeb版の `.btn-sub` と同じグレーの角丸 (`SubButton`)、入力欄は濃い背景・グレーの枠。\
-  無線機画面は、Web版と同じ「1つの無線機カード」の中に、ヘッダー(退出) / 液晶(ROOM HASH・レベル・話題タグ・TX/RX・参加者、点線の区切り) / 話すボタン / 招待・再接続・VOX・効果音 を並べる。スクロールして液晶が見えなくなると、上にルームハッシュのバーが出る。\
-  **部屋一覧**: ロビー (ホーム) では普通に表示する。**入室後は下に並べず、左から右へスワイプすると開く左ドロワー** (画面の左端のつまみをタップしても開く。一覧から別の部屋をタップすると移動して閉じる。ロビーに戻ると自動で閉じる)。
-- **VOX の丸ボタン・スピーカーのミュート・左手用・効果音の音量 (Web版に合わせた)**: VOX は話すボタンの左下の丸いボタン (オフ=灰色 / オン=緑に光る。左手用は右下)。ヘッダーに「再接続」と「退出」、フッターに「招待」とスピーカーのミュート (🔈/🔇、相手の声と効果音を止める。マイクは止めない。`JavaAudioDeviceModule.setSpeakerMute`)。\\
-  設定に「操作」(左手用、`pochitalk_lefty` にオンのときだけ `1` を保存) と「効果音」(音量 0〜150%、`pochitalk_sfx_vol`、離すと「ガッ」と試し聴き) を追加。**効果音のオン・オフのスイッチは廃止** (音量 0% で消す)。話すボタンの文字は `PUSH / TO TALK`。参加者の名札は Web版のように詰めた (間隔・余白を小さく、最大110dpでスクロール)。\\
-- **話すボタンのスワイプ判定 (Web版の touchmove と同じ考え方)**: 入室後の「左から右へのスワイプ」で、指が話すボタンの上に乗っても、誤って送信しない。ただし「どれだけ動いたか」ではなく、**指がボタン (円) の外に出たか**で判定する (`ui/PttGesture.kt` の状態遷移、`PttGestureTest` 9件)。\\
-  押してから130ms (短いタップでは送信しない) たつと送信を始める。**円の上にいる間は、どれだけ指を滑らせても話し続ける**。円の縁から約14dp以上離れたら、スワイプとみなす: 待っている間なら送信しない、送信中なら**終了音を鳴らさずにすぐ止める** (`pttAbort`)。いったんスワイプになったら、円に戻っても再開しない。\\
-  円の上にいる間は動きを消費して、親 (ドロワー・スクロール) に取られないようにしている。**子が一度でも動きを消費すると、親のドラッグ判定はそのスワイプ全体で取り消される**ので、円の外に出て、右向きの動きだったときは、`onOpenRooms()` で部屋一覧を直接開く (指に追従しない、アニメーションで開く動き)。\\
-  実機で確認済み: 円の上で±150px 滑らせても話し続ける / 話している途中で円の外 (右) に出すと、指を離す前に止まり、一覧が開く / 画面の左側からの左→右のスワイプで一覧が開く / ボタンの上から始めた長いスワイプで一覧が開く / 普通に押して話せる / 50ms の短いタップで送信されない / 8秒の長押しでも途中で止まらない。\\
-  既知の挙動: ボタンの上から始めたスワイプが、円の外に出るまでに130ms以上かかる (ゆっくりなスワイプ) と、その間に一瞬だけ送信が始まって、円の外に出た時点で止まる (仕様どおり)。
-- **話題タグ・部屋の検索・再接続 (Web版に合わせた)**: 部屋の中で話題タグ (30文字まで、付けた人の名前つき) をつけられ、一覧に出る (`roomTag` アクション、`presence` にも載せる)。一覧は URL・ハッシュ・名前・話題で絞り込める。\
-  再接続は、通話とロビーの接続を、部屋に入ったまま張り直す (入室時刻・タグ・マイクは維持。ホーム画面ではロビーだけ)。無線機画面の「再接続」ボタンと、ホーム画面の「一覧を再接続」ボタンがある。\
-  自動でも張り直す: ① 回線が戻った/切り替わったとき (Wi-Fi の切断→復帰を実機で確認)、② 20秒以上アプリを離れて戻ったとき (**通話中=相手とつながっているときは除く**。サービスで接続が生きているため)。\
-  再接続で作り直した部屋にも、**マイクの音声トラックを付け直す** (これを忘れると、再接続のあとは「話している」表示だけが相手に出て、音声が届かなくなる。`connectRoom` の最後で `ensureMic()` を呼ぶ)。\
-  リレーの WebSocket も、見かけ上開いていても死んでいることがあるので、再接続のときに張り直す (古いソケットのコールバックは世代番号で無視)。
-- **音量レベルメーター**: TX/MIC はマイク (VOXと同じく録音中だけ取れる)、RX は libwebrtc の統計 (`inbound-rtp` の `audioLevel`) を150msごとに取って表示する。ブラウザ版の表示 (dB、24セグメント、ピークホールド) に合わせたが、RX の値が取れるか・ブラウザ版と同じ見え方かは未確認。
-- **フォアグラウンドサービス (microphone)**: Android 14 以降は、アプリが前面にあるとき (入室ボタンを押したとき) に開始する必要がある。
-  `RECORD_AUDIO` が未許可だとサービスは開始しない (聞くだけの参加になる)。
-- **効果音の音色** (Web版の合成を近似しただけ)、エコー (スピーカーとマイクの回り込み)。
-- **Nostrリレーの生存**: Web版の既定リレー5本のうち、この作業環境からは `relay.exit.pub` (名前解決に失敗) と `nostr.lu.ke` (TLSエラー) に接続できなかった。
-  3本で動くが、リレーが減るとつながりにくくなる。ブラウザ版もこの5本固定なので、変えるなら両方そろえる。
-
-### 既知の違い (ブラウザ版との差)
-
-- オファーは、ブラウザ版のように事前に作っておくプールを持たず、announce を見てから作る。接続が最大で数秒遅くなることがある。
-- 同じ相手へ出す未成立のオファーは最大2本まで (ブラウザ版は最大5本)。モバイルの負荷を抑えるため。
-- リレーが切れたら再接続して購読を再送する (ブラウザ版の Trystero 0.20.0 は再送しない)。
-- 招待リンクのアプリ起動は `autoVerify` を付けていない。端末の設定で「このアプリで開く」を許可したときだけ起動する。
-  (確実にしたいなら、Web版のドメインに `/.well-known/assetlinks.json` を置いて autoVerify を有効にする)
-
-## 実機での相互通話テスト チェックリスト
-
-準備: パソコンのブラウザで Web版 (公開URL) を開き、ニックネームを決めて「新しい部屋を作る」。Android 側にアプリを入れる。
-
-**部屋の発見と接続**
-- [ ] Android のホームの「いまある部屋」に、ブラウザで作った部屋が出る (ハッシュ・人数・名前)
-- [ ] Android で部屋をタップして入る → ブラウザ側の参加者に Android のニックネームが出る (逆も)
-- [ ] Android で「新しい部屋を作る」→「招待URLを送る」→ ブラウザで開いて「入室」→ 互いに見える
-- [ ] `adb logcat -s Pochitalk` に `relay open`、`ice CONNECTED`、`connect` が出る
-
-**音声**
-- [ ] Android のボタンを押して話す → ブラウザ側で RX が点灯して声が聞こえる
-- [ ] ブラウザで話す → Android で RX が点灯して声が聞こえる (**再ネゴシエーションの確認: ブラウザが先に話す/Androidが先に話す、の両方を試す**)
-- [ ] 話し終わりに「ガッ」が鳴る (自分が話し終えたとき / 相手が話し終えたとき)
-
-**話中・混線**
-- [ ] ブラウザで話している間に Android でボタンを押すと「話中です」とブザーが鳴り、送信されない
-- [ ] ほぼ同時に押す → 両方で「混線！」と混線ノイズ、送信が切れる
-
-**VOX**
-- [ ] VOX オンで声を出すと自動で送信され、黙って約1.2秒後に終わる (イヤホン使用)
-- [ ] 相手が話している間は、声を出しても割り込まない
-- [ ] メーターが動かない/反応しすぎる場合は「しきい値」を調整 (右ほど大きな声が必要。動かない場合はログで録音が始まっているか確認)
-- [ ] 液晶のレベルメーター: 待機中は MIC (青)、自分が話すと TX (赤)、相手が話すと RX (緑) になり、dB とピーク表示が動く
-
-**画面オフ・バックグラウンド**
-- [ ] 入室したまま画面を消す / 別アプリに切り替える → 通知が出て、声が聞こえ続ける
-- [ ] 通知の「退出」で抜けられる。アプリに戻るとホーム画面になっている
-
-**権限・例外**
-- [ ] マイクを拒否して入室 → 聞くだけで入れる。話そうとすると許可を求められる
-- [ ] 機内モード/回線切断 → 復帰後にリレーへ再接続して、部屋一覧が復活する
-- [ ] 部屋の移動 (一覧から別の部屋をタップ) → 「ザーッ」が鳴って移動できる。送信中は移動できない
-- [ ] 「このアプリについて」の表示、スクロール、閉じる
+未確認: TURN 中継だけで通すとき (中継候補の収集までは確認)、9人目の満員の挙動、長時間の通話、おうむ返しボットからの返事の再生。

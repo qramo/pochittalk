@@ -6,18 +6,20 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
+import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 1本のNostrリレーとのWebSocket。切れたら指数バックオフで再接続し、購読(REQ)を再送する
- * (Trystero本体は再接続時に購読を再送しないが、モバイルは回線が切れやすいのでここで補う)。
+ * (Trystero本体も再接続時に購読を再送する。since は再送のたびに現在時刻へ更新する)。
  */
 class NostrClient(
     val index: Int,
     val url: String,
     private val http: OkHttpClient,
     private val schedule: (delayMs: Long, task: () -> Unit) -> Unit,
-    private val onEvent: (client: NostrClient, subId: String, content: String) -> Unit,
+    /** topic は、イベントのタグ ["x", topic] の値 (無ければ空文字)。 */
+    private val onEvent: (client: NostrClient, subId: String, topic: String, content: String, event: JSONObject) -> Unit,
     private val log: (String) -> Unit = {},
 ) {
     @Volatile private var socket: WebSocket? = null
@@ -26,7 +28,7 @@ class NostrClient(
     @Volatile private var closed = false
     @Volatile private var generation = 0 // 作り直したあとに、古いソケットのコールバックを無視するための世代番号
     private var retryMs = DEFAULT_RETRY_MS
-    private val subs = ConcurrentHashMap<String, String>() // subId -> REQ メッセージ
+    private val subs = ConcurrentHashMap<String, () -> String>() // subId -> REQ メッセージを作る関数
 
     fun connect() {
         if (closed) return
@@ -38,7 +40,7 @@ class NostrClient(
                 isOpen = true
                 retryMs = DEFAULT_RETRY_MS
                 log("relay open: $url")
-                subs.values.forEach { webSocket.send(it) }
+                subs.values.forEach { webSocket.send(it()) }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -76,8 +78,20 @@ class NostrClient(
             when (arr.getString(0)) {
                 "EVENT" -> {
                     val subId = arr.getString(1)
-                    val content = arr.getJSONObject(2).getString("content")
-                    onEvent(this, subId, content)
+                    val ev = arr.getJSONObject(2)
+                    val content = ev.getString("content")
+                    var topic = ""
+                    val tags = ev.optJSONArray("tags")
+                    if (tags != null) {
+                        for (i in 0 until tags.length()) {
+                            val t = tags.optJSONArray(i) ?: continue
+                            if (t.optString(0) == NostrProtocol.TAG) {
+                                topic = t.optString(1)
+                                break
+                            }
+                        }
+                    }
+                    onEvent(this, subId, topic, content, ev)
                 }
                 "NOTICE" -> log("relay notice $url: ${arr.optString(1)}")
                 "OK" -> if (!arr.optBoolean(2, true)) log("relay rejected $url: ${arr.optString(3)}")
@@ -92,10 +106,10 @@ class NostrClient(
         return isOpen && s != null && s.send(text)
     }
 
-    fun subscribe(subId: String, topic: String) {
-        val req = NostrProtocol.subscribe(subId, topic)
-        subs[subId] = req
-        send(req)
+    /** 購読する。builder は接続のたびに呼ばれる (since を最新にするため)。 */
+    fun subscribe(subId: String, builder: () -> String) {
+        subs[subId] = builder
+        send(builder())
     }
 
     fun unsubscribe(subId: String) {
@@ -103,9 +117,11 @@ class NostrClient(
         send(NostrProtocol.unsubscribe(subId))
     }
 
-    fun publish(topic: String, content: String) {
-        send(NostrProtocol.createEvent(topic, content))
-    }
+    /** topic 宛てに、Trystero の通信イベントとして投稿する。送れたら true。 */
+    fun publish(topic: String, content: String): Boolean = send(NostrProtocol.createTopicEvent(topic, content))
+
+    /** 作ったイベント (["EVENT", ...]) をそのまま投稿する。 */
+    fun publishRaw(event: String): Boolean = send(event)
 
     /**
      * いまの接続を捨てて、つなぎ直す (購読は保持して、開いたら再送する)。
@@ -125,9 +141,26 @@ class NostrClient(
         connect()
     }
 
+    /**
+     * 在室通知などの取り直し用 (Web版の presenceRefresh と同じ):
+     * 開いている接続には購読 (REQ) をやり直し、閉じている/閉じかけの接続は捨ててつなぎ直す。
+     * 古い接続の「閉じた」通知は世代番号で無視するので、新しい接続の登録を消さない。
+     */
+    fun refresh() {
+        if (closed) return
+        val s = socket
+        if (isOpen && s != null) {
+            retryMs = DEFAULT_RETRY_MS
+            subs.values.forEach { s.send(it()) }
+        } else {
+            reconnect()
+        }
+    }
+
     fun close() {
         closed = true
         isOpen = false
+        generation++
         socket?.close(1000, null)
         socket = null
     }

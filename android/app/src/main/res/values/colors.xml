@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#1D4ED8</color>
+    <!-- Web版の favicon.svg と同じ背景色 -->
+    <color name="ic_launcher_background">#1A1E24</color>
 </resources>

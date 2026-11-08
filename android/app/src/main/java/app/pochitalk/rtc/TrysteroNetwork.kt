@@ -2,6 +2,7 @@ package app.pochitalk.rtc
 
 import app.pochitalk.core.NostrClient
 import app.pochitalk.core.TrysteroCrypto
+import app.pochitalk.core.NostrProtocol
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
@@ -11,41 +12,37 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
- * Trystero 0.20.0 nostr 戦略の「リレー接続」部分。ブラウザ版の strategy.js / nostr.js に対応。
- *  - リレーは Trystero の defaultRelayUrls の先頭5件 (relayRedundancy = 5) を使う。
- *    ブラウザ版も同じ5件に購読と投稿をするので、1つでも生きていれば相互に見つけ合える。
- *  - selfId はプロセス内で全部屋共通 (Trystero の utils.selfId と同じ)。
- *  - 1つのリレー接続を全部屋 (ロビー + 通話部屋) で共有する。
+ * Trystero 0.25.4 nostr 戦略の「リレー接続」部分。
+ *  - リレーは呼び出し側が選ぶ (Web版と同じ: 動いているものから最大3本)。
+ *  - selfId はプロセスで1つ (Trystero の utils.selfId と同じ。全部屋共通)。
+ *  - 1つのリレー接続を全部屋で共有する。
  */
 class TrysteroNetwork(
     val factory: PeerConnectionFactory,
-    val iceServers: List<PeerConnection.IceServer>,
-    relayHosts: List<String> = DEFAULT_RELAYS,
+    /** 接続の準備を作るたびに呼ばれる。TURN の資格情報が更新されても、次の接続から反映される。 */
+    val iceServers: () -> List<PeerConnection.IceServer>,
+    relayUrls: List<String>,
+    private val http: OkHttpClient,
 ) {
-    val selfId: String = TrysteroCrypto.genId(20)
+    val selfId: String get() = SELF_ID
 
-    internal class SubInfo(val room: TrysteroRoom, val clientIndex: Int, val topic: String)
+    internal class SubInfo(val room: TrysteroRoom, val clientIndex: Int)
 
     private val subs = ConcurrentHashMap<String, SubInfo>()
     private val rooms = HashMap<String, TrysteroRoom>() // "appId/roomId"
 
-    private val http = OkHttpClient.Builder()
-        .pingInterval(30, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS)
-        .build()
-
-    internal val relays: List<NostrClient> = relayHosts.mapIndexed { index, host ->
+    internal val relays: List<NostrClient> = relayUrls.mapIndexed { index, url ->
         NostrClient(
             index = index,
-            url = "wss://$host",
+            url = url,
             http = http,
             schedule = { ms, task -> Runtime.scope.launch { delay(ms); task() } },
-            onEvent = { client, subId, content ->
+            onEvent = { client, subId, topic, content, _ ->
                 // 別スレッドから来るので、エンジンスレッドに戻してから処理する
                 Runtime.scope.launch {
                     val info = subs[subId]
                     if (info != null && info.clientIndex == client.index) {
-                        info.room.handleRelayMessage(info.clientIndex, info.topic, content)
+                        info.room.handleRelayMessage(info.clientIndex, topic, content)
                     }
                 }
             },
@@ -62,6 +59,12 @@ class TrysteroNetwork(
         relays.forEach { it.reconnect() }
     }
 
+    fun close() {
+        rooms.values.toList().forEach { it.leave() }
+        relays.forEach { it.close() }
+        subs.clear()
+    }
+
     fun joinRoom(appId: String, roomId: String): TrysteroRoom {
         val key = "$appId/$roomId"
         rooms[key]?.let { return it }
@@ -70,14 +73,15 @@ class TrysteroNetwork(
         return room
     }
 
-    internal fun roomClosed(appId: String, roomId: String) {
-        rooms.remove("$appId/$roomId")
+    internal fun roomClosed(appId: String, roomId: String, room: TrysteroRoom) {
+        val key = "$appId/$roomId"
+        if (rooms[key] === room) rooms.remove(key)
     }
 
-    internal fun subscribe(room: TrysteroRoom, clientIndex: Int, topic: String): String {
+    internal fun subscribe(room: TrysteroRoom, clientIndex: Int, topics: List<String>): String {
         val subId = TrysteroCrypto.genId(64)
-        subs[subId] = SubInfo(room, clientIndex, topic)
-        relays[clientIndex].subscribe(subId, topic)
+        subs[subId] = SubInfo(room, clientIndex)
+        relays[clientIndex].subscribe(subId) { NostrProtocol.subscribe(subId, topics) }
         return subId
     }
 
@@ -87,13 +91,18 @@ class TrysteroNetwork(
     }
 
     companion object {
-        /** Trystero 0.20.0 の defaultRelayUrls の先頭5件 (ブラウザ版が実際に使うもの)。 */
-        val DEFAULT_RELAYS = listOf(
-            "relay.nostr.net",
-            "relay.snort.social",
-            "relay.piazza.today",
-            "relay.exit.pub",
-            "nostr.lu.ke",
-        )
+        /**
+         * Trystero の selfId (20文字)。プロセスで1つ。
+         * 先頭を "00" にして、相手より「小さい id」になるようにしている。Trystero は id の小さい側がオファーを作るので、
+         * Android が必ずオファー側になる。Web版 (0.25.4) は、57秒以上前に作り置きしたオファーを出すとき、
+         * ブラウザの挙動 (ロールバック後の ICE 再起動) で中身の無い SDP になり、ブラウザ側がオファーを出す役のときは
+         * つながらないことがあるため (Android が答える側だと、これを受け取ってしまう)。
+         */
+        val SELF_ID: String by lazy { "00" + TrysteroCrypto.genId(18) }
+
+        fun newHttpClient(): OkHttpClient = OkHttpClient.Builder()
+            .pingInterval(30, TimeUnit.SECONDS)
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .build()
     }
 }

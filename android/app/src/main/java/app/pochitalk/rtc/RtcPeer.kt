@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONObject
 import org.webrtc.DataChannel
 import org.webrtc.IceCandidate
@@ -16,204 +17,207 @@ import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RtpReceiver
 import org.webrtc.RtpSender
-import org.webrtc.RtpTransceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import java.nio.ByteBuffer
 import java.security.SecureRandom
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
- * @thaunknown/simple-peer 10.x (index.js + lite.js) の移植。Trystero のブラウザ版が相手なので、
- * 次の挙動を忘れずに合わせている:
- *  - trickle:false。ICE候補を集め終えてから (iceGatheringState COMPLETE、または最初の候補から5秒後に)
- *    SDP を1回だけ送る。
- *  - イニシエータが DataChannel を作り、ノンイニシエータは ondatachannel で受ける。
- *  - 接続後の再ネゴシエーション (トラック追加など) は、データチャネル上の "@_signal" で
- *    {type:'renegotiate'} / {type:'transceiverRequest'} / {type:'offer'|'answer', sdp} をやり取りする。
- *    ノンイニシエータは自分でオファーを作れないので、イニシエータに依頼する。
+ * Trystero 0.25.4 の peer.ts の移植 (ブラウザ標準の WebRTC を使う「Perfect Negotiation」方式)。
+ *  - ICE 候補は少しずつ送る (trickle)。オファー/アンサーは候補を待たずに出す。
+ *    候補は {type:"candidate", sdp: JSON.stringify({candidate, sdpMid, sdpMLineIndex, usernameFragment})} の形で渡す。
+ *  - イニシエータだけがデータチャネル "data" を作り、相手は ondatachannel で受ける。
+ *  - 再ネゴシエーション (音声トラックの追加など) はどちらからでも始められる。
+ *    オファーがぶつかったら、イニシエータは相手のオファーを無視し、ノンイニシエータは巻き戻して受ける。
+ *  - 切断の検知: failed / closed はすぐ、disconnected は5秒続いたら close とみなす。
  *
  * すべてのメソッドは Runtime.scope (単一スレッド) 上から呼ぶこと。
  */
 class RtcPeer(
-    factory: PeerConnectionFactory,
+    private val factory: PeerConnectionFactory,
     iceServers: List<PeerConnection.IceServer>,
     val initiator: Boolean,
     private val scope: CoroutineScope = Runtime.scope,
     private val log: (String) -> Unit = Runtime::log,
 ) {
+    enum class Health { LIVE, TRANSIENT, STALE }
+
     val id: String = ByteArray(4).also { SecureRandom().nextBytes(it) }.toHex().take(7)
     val created: Long = System.currentTimeMillis()
 
-    /** 最初に発生した signal (イニシエータならオファー、ノンイニシエータならアンサー)。 */
-    val firstSignal = CompletableDeferred<JSONObject>()
-
     var isDead = false
         private set
-    private var destroying = false
-    private var connected = false
+
+    /** 最初のオファー (イニシエータのみ)。 */
+    val offer = CompletableDeferred<String>()
+
+    // ---- ハンドラ (signal は、設定されるまで溜めておく)
+    var onConnect: (() -> Unit)? = null
+    var onClose: (() -> Unit)? = null
+
+    /** 相手の音声トラック (届いたら、または設定した時点ですでに届いていたら呼ぶ)。 */
+    var remoteAudio: org.webrtc.AudioTrack? = null
+        private set
+    var onRemoteAudio: ((org.webrtc.AudioTrack) -> Unit)? = null
+        set(v) {
+            field = v
+            remoteAudio?.let { v?.invoke(it) }
+        }
+    var onError: ((String) -> Unit)? = null
+    private var signalHandler: ((type: String, sdp: String) -> Unit)? = null
+    private val pendingSignals = ArrayList<Pair<String, String>>()
+    private var dataHandler: ((ByteArray) -> Unit)? = null
+    private val pendingData = ArrayList<ByteArray>()
 
     private var pc: PeerConnection? = null
     private var channel: DataChannel? = null
-
-    private var pcReady = false
-    private var channelReady = false
-    private var iceComplete = false
-    private var iceCompleteTimer: Job? = null
-    private val iceCompleteWaiters = ArrayList<() -> Unit>()
-
-    private var isNegotiating = false
-    private var firstNegotiation = true
-    private var batchedNegotiation = false
-    private var queuedNegotiation = false
-
-    private var remoteDescriptionSet = false
-    private val pendingCandidates = ArrayList<IceCandidate>()
-    private val requestedTransceivers = HashSet<RtpTransceiver>()
+    private var connectFired = false
+    private var didEmitClose = false
+    private var makingOffer = false
+    private var settingRemoteAnswer = false
+    private var disconnectJob: Job? = null
     private val senders = HashMap<MediaStreamTrack, RtpSender>()
 
-    private val earlyData = ArrayList<ByteArray>()
-    private var dataHandler: ((ByteArray) -> Unit)? = null
-    private val signalListeners = ArrayList<(JSONObject) -> Unit>()
-    private val connectListeners = ArrayList<() -> Unit>()
-    private val closeListeners = ArrayList<() -> Unit>()
+    private class RemoteCandidate(val mid: String, val index: Int, val sdp: String, val ufrag: String?)
+
+    private val pendingRemoteCandidates = ArrayList<RemoteCandidate>()
 
     private fun post(block: () -> Unit) {
         scope.launch { block() }
     }
 
-    private abstract inner class SdpObs : SdpObserver {
-        override fun onCreateSuccess(sdp: SessionDescription) {}
-        override fun onSetSuccess() {}
-        override fun onCreateFailure(error: String) {}
-        override fun onSetFailure(error: String) {}
-    }
-
     private val pcObserver = object : PeerConnection.Observer {
         override fun onSignalingChange(state: PeerConnection.SignalingState) {
-            post { onSignalingStateChange(state) }
+            log("[$id] signaling $state")
+        }
+        override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
+            post {
+                log("[$id] ice $state")
+                handleConnectionStateChange()
+            }
         }
 
-        override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
-            post { onIceStateChange(state) }
+        override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
+            post {
+                log("[$id] pc $state")
+                handleConnectionStateChange()
+            }
         }
 
         override fun onIceConnectionReceivingChange(receiving: Boolean) {}
-
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
-            if (state == PeerConnection.IceGatheringState.COMPLETE) post { markIceComplete() }
+            log("[$id] gathering $state")
         }
 
         override fun onIceCandidate(candidate: IceCandidate) {
-            // trickle:false なので候補は送らない。最初の候補からタイムアウトを数え始めるだけ。
-            post { startIceCompleteTimeout() }
+            val ufrag = Regex(" ufrag (\\S+)").find(candidate.sdp)?.groupValues?.get(1)
+            val json = JSONObject()
+                .put("candidate", candidate.sdp)
+                .put("sdpMid", candidate.sdpMid)
+                .put("sdpMLineIndex", candidate.sdpMLineIndex)
+            if (ufrag != null) json.put("usernameFragment", ufrag)
+            post { emitSignal("candidate", json.toString()) }
         }
 
         override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) {}
         override fun onAddStream(stream: MediaStream) {}
         override fun onRemoveStream(stream: MediaStream) {}
-        override fun onRenegotiationNeeded() {}
+        override fun onRenegotiationNeeded() {
+            scope.launch { negotiate() }
+        }
 
         override fun onDataChannel(dc: DataChannel) {
             post { setupData(dc) }
         }
 
         override fun onAddTrack(receiver: RtpReceiver, mediaStreams: Array<out MediaStream>) {
-            // 受信した音声トラックは libwebrtc が自動で再生する。ここで特別な処理は要らない。
-        }
-
-        override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
-            if (state == PeerConnection.PeerConnectionState.FAILED) post { destroy("connection failed") }
+            // 受信した音声トラックは libwebrtc が自動で再生する。モールス/FAX の復号のために、トラックも渡す。
+            val t = receiver.track() as? org.webrtc.AudioTrack ?: return
+            post {
+                remoteAudio = t
+                onRemoteAudio?.invoke(t)
+            }
         }
     }
 
     init {
         val config = PeerConnection.RTCConfiguration(iceServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+            // TURN の資格情報が取れていれば、中継のみ（家の無線LANで、直接の経路が通らず、つながるのが遅くなるため）。取れなければ STUN で直接
+            val useRelay = iceServers.any { s -> s.urls.any { it.startsWith("turn:") || it.startsWith("turns:") } }
+            iceTransportsType = if (useRelay) PeerConnection.IceTransportsType.RELAY else PeerConnection.IceTransportsType.ALL
         }
         pc = factory.createPeerConnection(config, pcObserver)
         if (pc == null) {
             post { destroy("createPeerConnection failed") }
-        } else {
-            if (initiator) {
-                val label = ByteArray(20).also { SecureRandom().nextBytes(it) }.toHex()
-                val dc = pc!!.createDataChannel(label, DataChannel.Init())
-                if (dc != null) setupData(dc) else post { destroy("createDataChannel failed") }
+        } else if (initiator) {
+            val dc = pc!!.createDataChannel("data", DataChannel.Init())
+            if (dc != null) setupData(dc) else post { destroy("createDataChannel failed") }
+            // peer.ts と同じく、最初のオファーを自分で起こす
+            scope.launch {
+                if (!makingOffer && pc?.signalingState() == PeerConnection.SignalingState.STABLE && pc?.localDescription == null) {
+                    negotiate()
+                }
             }
-            needsNegotiation()
         }
     }
 
     // ------------------------------------------------------------------ 公開API
 
-    fun onSignal(listener: (JSONObject) -> Unit) { signalListeners.add(listener) }
-    fun onConnect(listener: () -> Unit) { connectListeners.add(listener) }
-    fun onClose(listener: () -> Unit) { closeListeners.add(listener) }
+    /** signal ハンドラを差し替える。それまでに溜まった signal はすぐ渡す。 */
+    fun setSignalHandler(handler: ((type: String, sdp: String) -> Unit)?) {
+        signalHandler = handler
+        if (handler != null && pendingSignals.isNotEmpty()) {
+            val buffered = ArrayList(pendingSignals)
+            pendingSignals.clear()
+            buffered.forEach { (t, s) -> handler(t, s) }
+        }
+    }
 
-    /** データ受信ハンドラを登録し、それまでに届いていたデータを流し込む (Trystero の drainEarlyData)。 */
+    /** データ受信ハンドラを登録し、それまでに届いていたデータを流し込む。 */
     fun setDataHandler(handler: (ByteArray) -> Unit) {
         dataHandler = handler
-        val buffered = ArrayList(earlyData)
-        earlyData.clear()
+        val buffered = ArrayList(pendingData)
+        pendingData.clear()
         buffered.forEach(handler)
     }
 
     fun send(bytes: ByteArray) {
         val dc = channel ?: return
-        if (isDead || destroying) return
-        dc.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), true))
+        if (isDead) return
+        try {
+            dc.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), true))
+        } catch (e: Exception) {
+            log("[$id] send failed: ${e.message}")
+        }
     }
 
-    /** 相手から届いた signal (SDP / renegotiate / transceiverRequest / candidate) を処理する。 */
-    fun signal(data: JSONObject) {
-        if (destroying || isDead) return
-        val conn = pc ?: return
-        val renegotiate = data.optBoolean("renegotiate", false)
-        val transceiverRequest = data.optJSONObject("transceiverRequest")
-        val candidate = data.optJSONObject("candidate")
-        val sdp = data.optString("sdp", "")
+    fun health(): Health {
+        if (isDead) return Health.STALE
+        val conn = pc ?: return Health.STALE
+        val cs = conn.connectionState()
+        val ics = conn.iceConnectionState()
+        val ch = channel
+        val chs = ch?.state()
+        if (cs == PeerConnection.PeerConnectionState.CLOSED || cs == PeerConnection.PeerConnectionState.FAILED ||
+            ics == PeerConnection.IceConnectionState.CLOSED || ics == PeerConnection.IceConnectionState.FAILED ||
+            chs == DataChannel.State.CLOSING || chs == DataChannel.State.CLOSED
+        ) return Health.STALE
+        if (ch == null || chs != DataChannel.State.OPEN) return Health.TRANSIENT
+        return Health.LIVE
+    }
 
-        if (renegotiate && initiator) {
-            log("[$id] got request to renegotiate")
-            needsNegotiation()
-        }
-        if (transceiverRequest != null && initiator) {
-            log("[$id] got request for transceiver")
-            addTransceiver(transceiverRequest.optString("kind", "audio"))
-        }
-        if (candidate != null) {
-            val c = IceCandidate(
-                candidate.optString("sdpMid", ""),
-                candidate.optInt("sdpMLineIndex", 0),
-                candidate.optString("candidate", ""),
-            )
-            if (remoteDescriptionSet) conn.addIceCandidate(c) else pendingCandidates.add(c)
-        }
-        if (sdp.isNotEmpty()) {
-            val type = SessionDescription.Type.fromCanonicalForm(data.optString("type", ""))
-            conn.setRemoteDescription(object : SdpObs() {
-                override fun onSetSuccess() {
-                    post {
-                        if (isDead) return@post
-                        remoteDescriptionSet = true
-                        pendingCandidates.forEach { pc?.addIceCandidate(it) }
-                        pendingCandidates.clear()
-                        if (type == SessionDescription.Type.OFFER) createAnswer()
-                    }
-                }
-
-                override fun onSetFailure(error: String) {
-                    post { destroy("setRemoteDescription: $error") }
-                }
-            }, SessionDescription(type, sdp))
-        }
-        if (sdp.isEmpty() && candidate == null && !renegotiate && transceiverRequest == null) {
-            destroy("signal() called with invalid signal data")
-        }
+    /** 相手から届いた signal (オファー / アンサー / 候補) を処理する。 */
+    fun signal(type: String, sdp: String) {
+        if (isDead) return
+        scope.launch { handleSignal(type, sdp) }
     }
 
     /** 自分の音声トラックを相手に流す (Trystero の room.addStream 相当)。 */
     fun addTrack(track: MediaStreamTrack, streamId: String) {
-        if (destroying || isDead) return
+        if (isDead) return
         val conn = pc ?: return
         if (senders.containsKey(track)) return
         val sender = conn.addTrack(track, listOf(streamId))
@@ -223,7 +227,7 @@ class RtcPeer(
         }
         senders[track] = sender
         log("[$id] audio track added")
-        needsNegotiation()
+        // 再ネゴシエーションは onRenegotiationNeeded で始まる
     }
 
     /**
@@ -249,255 +253,273 @@ class RtcPeer(
     }
 
     fun destroy(reason: String? = null) {
-        if (isDead || destroying) return
-        destroying = true
+        if (isDead) return
         isDead = true
         log("[$id] destroying${if (reason != null) " ($reason)" else ""}")
-        post {
-            iceCompleteTimer?.cancel()
-            try {
-                channel?.unregisterObserver()
-                channel?.close()
-                channel?.dispose()
-            } catch (_: Exception) {
-            }
-            try {
-                pc?.close()
-                pc?.dispose()
-            } catch (_: Exception) {
-            }
-            pc = null
-            channel = null
-            closeListeners.toList().forEach { it() }
+        disconnectJob?.cancel()
+        try {
+            channel?.unregisterObserver()
+            channel?.close()
+            channel?.dispose()
+        } catch (_: Exception) {
         }
+        try {
+            pc?.close()
+            pc?.dispose()
+        } catch (_: Exception) {
+        }
+        pc = null
+        channel = null
+        makingOffer = false
+        settingRemoteAnswer = false
+        emitClose()
     }
 
-    // ------------------------------------------------------------------ ネゴシエーション
+    // ------------------------------------------------------------------ 内部
 
-    private fun needsNegotiation() {
-        if (batchedNegotiation) return // 同じ tick 内の複数要求をまとめる
-        batchedNegotiation = true
-        post {
-            batchedNegotiation = false
-            if (initiator || !firstNegotiation) {
-                negotiate()
-            } // ノンイニシエータの最初のネゴシエーション要求は破棄 (simple-peer と同じ)
-            firstNegotiation = false
-        }
+    private fun emitClose() {
+        if (didEmitClose) return
+        didEmitClose = true
+        disconnectJob?.cancel()
+        onClose?.invoke()
     }
 
-    private fun negotiate() {
-        if (destroying || isDead) return
-        if (initiator) {
-            if (isNegotiating) {
-                queuedNegotiation = true
-            } else {
-                post { createOffer() }
-            }
-        } else {
-            if (isNegotiating) {
-                queuedNegotiation = true
-            } else {
-                // イニシエータにオファーを作ってもらう
-                emitSignal(JSONObject().put("type", "renegotiate").put("renegotiate", true))
-            }
-        }
-        isNegotiating = true
+    private fun emitSignal(type: String, sdp: String) {
+        if (type == "offer" && !offer.isCompleted) offer.complete(sdp)
+        val h = signalHandler
+        if (h != null) h(type, sdp) else pendingSignals.add(type to sdp)
     }
 
-    private fun addTransceiver(kind: String) {
-        if (destroying || isDead) return
+    private fun handleConnectionStateChange() {
         val conn = pc ?: return
-        if (initiator) {
-            try {
-                val mediaType = if (kind == "video") MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO
-                else MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO
-                conn.addTransceiver(mediaType, RtpTransceiver.RtpTransceiverInit())
-                needsNegotiation()
-            } catch (e: Exception) {
-                destroy("addTransceiver: ${e.message}")
-            }
-        } else {
-            emitSignal(
-                JSONObject().put("type", "transceiverRequest")
-                    .put("transceiverRequest", JSONObject().put("kind", kind)),
-            )
+        val cs = conn.connectionState()
+        val ics = conn.iceConnectionState()
+        if (cs == PeerConnection.PeerConnectionState.FAILED || cs == PeerConnection.PeerConnectionState.CLOSED ||
+            ics == PeerConnection.IceConnectionState.FAILED || ics == PeerConnection.IceConnectionState.CLOSED
+        ) {
+            emitClose()
+            return
         }
-    }
-
-    private fun requestMissingTransceivers() {
-        val conn = pc ?: return
-        for (t in conn.transceivers) {
-            val track = t.sender?.track()
-            if (t.mid == null && track != null && !requestedTransceivers.contains(t)) {
-                requestedTransceivers.add(t)
-                addTransceiver(track.kind())
-            }
+        if (cs == PeerConnection.PeerConnectionState.CONNECTED || cs == PeerConnection.PeerConnectionState.CONNECTING ||
+            ics == PeerConnection.IceConnectionState.CONNECTED || ics == PeerConnection.IceConnectionState.COMPLETED ||
+            ics == PeerConnection.IceConnectionState.CHECKING
+        ) {
+            disconnectJob?.cancel()
+            disconnectJob = null
+            return
         }
-    }
-
-    private fun filterTrickle(sdp: String) = sdp.replace(Regex("a=ice-options:trickle\\s\\n"), "")
-
-    private fun createOffer() {
-        if (isDead) return
-        val conn = pc ?: return
-        conn.createOffer(object : SdpObs() {
-            override fun onCreateSuccess(sdp: SessionDescription) {
-                post {
-                    if (isDead) return@post
-                    val offer = SessionDescription(sdp.type, filterTrickle(sdp.description))
-                    setLocalThenSend(offer, afterSend = {})
+        if (cs == PeerConnection.PeerConnectionState.DISCONNECTED || ics == PeerConnection.IceConnectionState.DISCONNECTED) {
+            if (disconnectJob == null) {
+                disconnectJob = scope.launch {
+                    delay(DISCONNECTED_CLOSE_DELAY_MS)
+                    disconnectJob = null
+                    val c = pc ?: return@launch
+                    if (c.connectionState() == PeerConnection.PeerConnectionState.DISCONNECTED ||
+                        c.iceConnectionState() == PeerConnection.IceConnectionState.DISCONNECTED
+                    ) emitClose()
                 }
             }
-
-            override fun onCreateFailure(error: String) {
-                post { destroy("createOffer: $error") }
-            }
-        }, MediaConstraints())
-    }
-
-    private fun createAnswer() {
-        if (isDead) return
-        val conn = pc ?: return
-        conn.createAnswer(object : SdpObs() {
-            override fun onCreateSuccess(sdp: SessionDescription) {
-                post {
-                    if (isDead) return@post
-                    val answer = SessionDescription(sdp.type, filterTrickle(sdp.description))
-                    setLocalThenSend(answer, afterSend = { if (!initiator) requestMissingTransceivers() })
-                }
-            }
-
-            override fun onCreateFailure(error: String) {
-                post { destroy("createAnswer: $error") }
-            }
-        }, MediaConstraints())
-    }
-
-    private fun setLocalThenSend(desc: SessionDescription, afterSend: () -> Unit) {
-        val conn = pc ?: return
-        conn.setLocalDescription(object : SdpObs() {
-            override fun onSetSuccess() {
-                post {
-                    if (isDead) return@post
-                    val send = {
-                        if (!isDead) {
-                            val local = pc?.localDescription ?: desc
-                            emitSignal(
-                                JSONObject().put("type", local.type.canonicalForm()).put("sdp", local.description),
-                            )
-                            afterSend()
-                        }
-                    }
-                    // trickle:false: 候補を集め終えるまで待つ
-                    if (iceComplete) send() else iceCompleteWaiters.add(send)
-                }
-            }
-
-            override fun onSetFailure(error: String) {
-                post { destroy("setLocalDescription: $error") }
-            }
-        }, desc)
-    }
-
-    private fun markIceComplete() {
-        if (iceComplete) return
-        iceComplete = true
-        iceCompleteTimer?.cancel()
-        val waiters = iceCompleteWaiters.toList()
-        iceCompleteWaiters.clear()
-        waiters.forEach { it() }
-    }
-
-    private fun startIceCompleteTimeout() {
-        if (isDead || iceCompleteTimer != null) return
-        iceCompleteTimer = scope.launch {
-            delay(ICE_COMPLETE_TIMEOUT_MS)
-            if (!iceComplete) {
-                log("[$id] ice gathering timeout; sending what we have")
-                markIceComplete()
-            }
-        }
-    }
-
-    private fun emitSignal(json: JSONObject) {
-        if (!firstSignal.isCompleted) firstSignal.complete(json)
-        signalListeners.toList().forEach { it(json) }
-    }
-
-    // ------------------------------------------------------------------ 状態変化
-
-    private fun onSignalingStateChange(state: PeerConnection.SignalingState) {
-        if (isDead) return
-        if (state == PeerConnection.SignalingState.STABLE) {
-            isNegotiating = false
-            if (queuedNegotiation) {
-                queuedNegotiation = false
-                needsNegotiation()
-            }
-        }
-    }
-
-    private fun onIceStateChange(state: PeerConnection.IceConnectionState) {
-        if (isDead) return
-        log("[$id] ice $state")
-        when (state) {
-            PeerConnection.IceConnectionState.CONNECTED, PeerConnection.IceConnectionState.COMPLETED -> {
-                pcReady = true
-                maybeReady()
-            }
-            PeerConnection.IceConnectionState.FAILED -> destroy("ice failed")
-            PeerConnection.IceConnectionState.CLOSED -> destroy("ice closed")
-            else -> {}
         }
     }
 
     private fun setupData(dc: DataChannel) {
+        if (channel != null && channel !== dc) {
+            log("[$id] extra data channel ignored")
+            return
+        }
         channel = dc
         dc.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) {}
 
             override fun onStateChange() {
-                val state = dc.state()
                 post {
-                    when (state) {
-                        DataChannel.State.OPEN -> onChannelOpen()
-                        DataChannel.State.CLOSED -> destroy("data channel closed")
+                    when (dc.state()) {
+                        DataChannel.State.OPEN -> fireConnect()
+                        DataChannel.State.CLOSED -> emitClose()
                         else -> {}
                     }
                 }
             }
 
             override fun onMessage(buffer: DataChannel.Buffer) {
-                // buffer.data はこの関数を抜けると解放されるので、ここでコピーする
                 val bytes = ByteArray(buffer.data.remaining())
                 buffer.data.get(bytes)
-                post { handleData(bytes) }
+                post {
+                    val h = dataHandler
+                    if (h != null) h(bytes) else pendingData.add(bytes)
+                }
             }
         })
-        if (dc.state() == DataChannel.State.OPEN) post { onChannelOpen() }
+        if (dc.state() == DataChannel.State.OPEN) post { fireConnect() }
     }
 
-    private fun onChannelOpen() {
-        if (connected || isDead) return
-        channelReady = true
-        maybeReady()
+    private fun fireConnect() {
+        if (connectFired || isDead) return
+        connectFired = true
+        log("[$id] data channel open")
+        onConnect?.invoke()
     }
 
-    private fun maybeReady() {
-        if (connected || !pcReady || !channelReady) return
-        connected = true
-        log("[$id] connect")
-        connectListeners.toList().forEach { it() }
+    // ------------------------------------------------------------------ ネゴシエーション (Perfect Negotiation)
+
+    private suspend fun negotiate() {
+        val conn = pc ?: return
+        if (isDead || makingOffer) return
+        if (conn.signalingState() != PeerConnection.SignalingState.STABLE) return
+        try {
+            makingOffer = true
+            val offerDesc = createSdp(conn, offer = true)
+            setLocal(conn, offerDesc)
+            emitLocalDescription(conn)
+        } catch (e: Exception) {
+            if (!isDead) {
+                log("[$id] failed to create local offer: ${e.message}")
+                onError?.invoke("failed to create local offer: ${e.message}")
+            }
+        } finally {
+            makingOffer = false
+        }
     }
 
-    private fun handleData(bytes: ByteArray) {
+    private fun emitLocalDescription(conn: PeerConnection) {
+        val ld = conn.localDescription ?: return
+        emitSignal(ld.type.canonicalForm(), ld.description)
+    }
+
+    private fun remoteUfrag(conn: PeerConnection): String? {
+        val sdp = conn.remoteDescription?.description ?: return null
+        return Regex("a=ice-ufrag:(\\S+)").find(sdp)?.groupValues?.get(1)
+    }
+
+    private fun canApplyRemoteCandidate(conn: PeerConnection, c: RemoteCandidate): Boolean {
+        val remote = conn.remoteDescription ?: return false
+        val mLines = Regex("^m=", RegexOption.MULTILINE).findAll(remote.description).count()
+        if (c.index >= 0 && mLines > 0 && c.index >= mLines) return false
+        val ufrag = remoteUfrag(conn)
+        if (ufrag != null && c.ufrag != null && c.ufrag != ufrag) return false
+        return true
+    }
+
+    private fun applyRemoteCandidate(conn: PeerConnection, c: RemoteCandidate): Boolean =
+        try {
+            conn.addIceCandidate(IceCandidate(c.mid, c.index, c.sdp))
+        } catch (e: Exception) {
+            false
+        }
+
+    private fun addRemoteCandidate(c: RemoteCandidate) {
+        val conn = pc ?: return
+        if (canApplyRemoteCandidate(conn, c)) {
+            if (!applyRemoteCandidate(conn, c)) pendingRemoteCandidates.add(c)
+            return
+        }
+        pendingRemoteCandidates.add(c)
+    }
+
+
+    private fun flushPendingRemoteCandidates() {
+        val conn = pc ?: return
+        if (conn.remoteDescription == null || pendingRemoteCandidates.isEmpty()) return
+        val queued = ArrayList(pendingRemoteCandidates)
+        pendingRemoteCandidates.clear()
+        for (c in queued) {
+            if (!canApplyRemoteCandidate(conn, c) || !applyRemoteCandidate(conn, c)) pendingRemoteCandidates.add(c)
+        }
+    }
+
+    private suspend fun handleSignal(type: String, sdp: String) {
+        val conn = pc ?: return
         if (isDead) return
-        val handler = dataHandler
-        if (handler == null) earlyData.add(bytes) else handler(bytes)
+        try {
+            if (type == "candidate") {
+                val j = JSONObject(sdp)
+                val cand = j.optString("candidate", "")
+                if (cand.isNotEmpty()) {
+                    addRemoteCandidate(
+                        RemoteCandidate(
+                            mid = if (j.isNull("sdpMid")) "" else j.optString("sdpMid", ""),
+                            index = j.optInt("sdpMLineIndex", -1),
+                            sdp = cand,
+                            ufrag = j.optString("usernameFragment", "").ifEmpty { null },
+                        ),
+                    )
+                }
+                return
+            }
+            // 音声の無い (データチャネルだけの) やり直しは、接続済みなら無視する
+            if (channel?.state() == DataChannel.State.OPEN && !sdp.contains("a=rtpmap")) return
+            if (type == "offer") {
+                val remote = SessionDescription(SessionDescription.Type.OFFER, sdp)
+                val collision = makingOffer ||
+                    (conn.signalingState() != PeerConnection.SignalingState.STABLE && !settingRemoteAnswer)
+                if (collision) {
+                    if (initiator) return // こちらのオファーを優先する
+                    setLocal(conn, SessionDescription(SessionDescription.Type.ROLLBACK, ""))
+                    setRemote(conn, remote)
+                } else {
+                    setRemote(conn, remote)
+                }
+                flushPendingRemoteCandidates()
+                log("[$id] remote offer set (collision=$collision), creating answer")
+                val answer = createSdp(conn, offer = false)
+                setLocal(conn, answer)
+                log("[$id] local answer set")
+                emitLocalDescription(conn)
+            } else if (type == "answer") {
+                settingRemoteAnswer = true
+                try {
+                    setRemote(conn, SessionDescription(SessionDescription.Type.ANSWER, sdp))
+                    flushPendingRemoteCandidates()
+                } finally {
+                    settingRemoteAnswer = false
+                }
+            }
+        } catch (e: Exception) {
+            if (!isDead) {
+                log("[$id] failed to apply remote signal ($type): ${e.message}")
+                onError?.invoke("failed to apply remote signal: ${e.message}")
+            }
+        }
     }
+
+    private suspend fun createSdp(conn: PeerConnection, offer: Boolean): SessionDescription =
+        suspendCancellableCoroutine { cont ->
+            val obs = object : SdpObserver {
+                override fun onCreateSuccess(sdp: SessionDescription) {
+                    if (cont.isActive) cont.resume(sdp)
+                }
+
+                override fun onCreateFailure(error: String) {
+                    if (cont.isActive) cont.resumeWithException(IllegalStateException(error))
+                }
+
+                override fun onSetSuccess() {}
+                override fun onSetFailure(error: String) {}
+            }
+            if (offer) conn.createOffer(obs, MediaConstraints()) else conn.createAnswer(obs, MediaConstraints())
+        }
+
+    private suspend fun setLocal(conn: PeerConnection, desc: SessionDescription) = setDescription(desc, conn, local = true)
+
+    private suspend fun setRemote(conn: PeerConnection, desc: SessionDescription) = setDescription(desc, conn, local = false)
+
+    private suspend fun setDescription(desc: SessionDescription, conn: PeerConnection, local: Boolean) =
+        suspendCancellableCoroutine<Unit> { cont ->
+            val obs = object : SdpObserver {
+                override fun onCreateSuccess(sdp: SessionDescription) {}
+                override fun onCreateFailure(error: String) {}
+                override fun onSetSuccess() {
+                    if (cont.isActive) cont.resume(Unit)
+                }
+
+                override fun onSetFailure(error: String) {
+                    if (cont.isActive) cont.resumeWithException(IllegalStateException(error))
+                }
+            }
+            if (local) conn.setLocalDescription(obs, desc) else conn.setRemoteDescription(obs, desc)
+        }
 
     companion object {
-        private const val ICE_COMPLETE_TIMEOUT_MS = 5_000L
+        private const val DISCONNECTED_CLOSE_DELAY_MS = 5_000L
     }
 }
