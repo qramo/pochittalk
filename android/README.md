@@ -44,7 +44,7 @@ app/src/main/java/app/pochitalk/
 │   ├─ RtcPeer.kt          peer.ts: ICE 候補を少しずつ送る (trickle)、Perfect Negotiation、切断の検知
 │   ├─ TrysteroRoom.kt     相手探し (announce / offer / answer / candidate)、接続後の確認 (@_hsready)、アクション
 │   ├─ TrysteroNetwork.kt  リレー接続の共有、購読の振り分け、selfId
-│   ├─ Lobby.kt            在室通知 (部屋一覧)、リレーの選別 (動いているものを全部/4本)、TURN 資格情報の取得
+│   ├─ Lobby.kt            在室通知 (部屋一覧)、リレーの選別 (動いているものを全部)、TURN 資格情報の取得
 │   └─ Runtime.kt          通信は全部この単一スレッドで処理 (JSの前提を保つため)
 ├─ engine/    アプリのふるまい (PochiEngine: 入退室、PTT、話中ロック、混線、VOX、満員、つながり不一致の監視)
 ├─ audio/     効果音、マイクの増幅/ミュート、待機中のマイク監視

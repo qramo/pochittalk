@@ -131,7 +131,7 @@ object RelayList {
 
     /**
      * 動いているリレーを選ぶ (Web版の pickRelaysMain と同じ): 全部を同時に調べ、ばらばらの順にして、
-     * 通話用は動いている全部、在室通知用に先頭4本。1本も開かなければ全部を使う。
+     * 通話用も在室通知用も、動いている全部 (Web版は在室通知を全部に流す)。1本も開かなければ全部を使う。
      */
     suspend fun pick(http: OkHttpClient): Pair<List<String>, List<String>> {
         val results = coroutineScope {
@@ -140,8 +140,8 @@ object RelayList {
         val alive = results.filter { it.second }.map { it.first }.shuffled()
         // 通話用は、動いている全部を使う。Web版は7本から3本をばらばらに選ぶので、こちらも3本だと、
         // 約11%の組み合わせで共通のリレーが1本も無く、お互いが見えない (Android同士も同じ)。全部使えば必ず重なる。
-        return if (alive.isEmpty()) NOSTR_RELAY_URLS to NOSTR_RELAY_URLS.take(4)
-        else alive to alive.take(4)
+        return if (alive.isEmpty()) NOSTR_RELAY_URLS to NOSTR_RELAY_URLS
+        else alive to alive
     }
 }
 

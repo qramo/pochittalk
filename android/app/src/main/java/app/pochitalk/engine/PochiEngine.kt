@@ -310,7 +310,7 @@ object PochiEngine {
 
     // ================================================================ ロビー (部屋一覧)
 
-    private var presenceUrls: List<String> = RelayList.NOSTR_RELAY_URLS.take(4)
+    private var presenceUrls: List<String> = RelayList.NOSTR_RELAY_URLS
 
     /** 在室通知 (Nostr リレー) を始める。通話の接続とは別のしくみ (Web版の joinLobby)。 */
     private fun startPresence() {
@@ -1140,8 +1140,15 @@ object PochiEngine {
             _state.update { if (it.connectedCount == 0 && it.presentCount == 0) it else it.copy(connectedCount = 0, presentCount = 0) }
             return
         }
+        // Web版の updatePeerCount と同じ: 一覧 (Nostr) で見える人と、実際につながっている人を、名前でまとめて数える。
+        // 一覧の人数は、ダイヤルと同じ (一覧の人 + 自分)。
         val n = peers.size + 1
-        val m = maxOf(n, lobbyEntries.values.count { it.key == cur })
+        val inLobby = lobbyEntries.values.filter { it.key == cur }
+        val names = HashSet<String>()
+        names.add(myNickname.take(12))
+        peers.forEach { (id, p) -> names.add((p.name.ifEmpty { id.take(5) }).take(12)) }
+        inLobby.forEach { names.add(it.name.take(12)) }
+        val m = maxOf(names.size, inLobby.size + 1, n)
         _state.update { if (it.connectedCount == n && it.presentCount == m) it else it.copy(connectedCount = n, presentCount = m) }
     }
 
