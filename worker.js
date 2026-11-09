@@ -1216,10 +1216,23 @@ const HTML = `<!DOCTYPE html>
     }
 
     const peerCountEl = document.getElementById('peerCount');
+    // 音声が通る相手の数。つながっていても、音声の取り決めが外れている相手（向き sendrecv→なし）は、数えない
+    function audioStuck(pc) {
+      try {
+        return pc.connectionState !== 'connected' || pc.getTransceivers().some(function (t) {
+          return t.sender && t.sender.track && (t.direction === 'sendrecv' || t.direction === 'sendonly') && t.currentDirection === null;
+        });
+      } catch (_) { return false; }
+    }
+    function goodLinkCount() {
+      let pcs = {}; try { pcs = room ? room.getPeers() : {}; } catch (_) { return peerMap.size; }
+      let n = 0; Object.keys(pcs).forEach(function (id) { if (!audioStuck(pcs[id])) n++; });
+      return n;
+    }
     // つながりの良し悪しの順位。各端末が「自分がつながっている人数(cn)」を在室通知で共有している。少ない順に並べ、先頭が「入り直すべき端末」
     function linkRanking() {
       if (!currentKey) return null;
-      const rows = [{ name: String(myNickname).slice(0, 12), cn: peerMap.size, me: true, key: pres.pub || 'zz' }];
+      const rows = [{ name: String(myNickname).slice(0, 12), cn: goodLinkCount(), me: true, key: pres.pub || 'zz' }];
       lobbyEntries.forEach(function (v, k) { if (v.ch === currentKey) rows.push({ name: v.name, cn: v.cn, me: false, key: k }); });
       const total = rows.length;
       const known = rows.filter(function (r) { return r.cn >= 0; });
@@ -2341,7 +2354,7 @@ const HTML = `<!DOCTYPE html>
         return;
       }
       pres.announced = true; pres.lastSent = Date.now();
-      presenceSend({ ch: currentKey, cn: peerMap.size, talking: isTransmitting, name: myNickname, tag: roomMeta.tag, by: roomMeta.by, at: roomMeta.at });
+      presenceSend({ ch: currentKey, cn: goodLinkCount(), talking: isTransmitting, name: myNickname, tag: roomMeta.tag, by: roomMeta.by, at: roomMeta.at });
     }
     function announceSoon() { setTimeout(announce, 300 + Math.random() * 1200); }
 
